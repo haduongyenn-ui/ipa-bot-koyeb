@@ -16,7 +16,7 @@ const GH_CONFIG = {
 
 // 👇 CẤU HÌNH 👇
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
-const FOLDER_NAME = 'IPA';    
+const FOLDER_NAME = 'iPA';    
 const PLIST_FOLDER = 'Plist'; 
 
 const userSessions = {};
