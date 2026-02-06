@@ -8,7 +8,6 @@
   "dependencies": {
     "telegraf": "^4.12.2",
     "axios": "^1.4.0",
-    "ipa-extract-info": "^1.2.0",
     "adm-zip": "^0.5.10"
   },
   "engines": {
