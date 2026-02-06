@@ -1,7 +1,6 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
-const ipaInfo = require('ipa-extract-info');
-const AdmZip = require('adm-zip'); // Thư viện giải nén mới
+const AdmZip = require('adm-zip'); // Dùng thư viện này cho tất cả
 const http = require('http');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -20,30 +19,47 @@ function makeProgressBar(percent) {
     return '■'.repeat(filled) + '□'.repeat(total - filled);
 }
 
-// Hàm trích xuất Team Name từ file mobileprovision
-function getTeamNameFromZip(buffer) {
-    try {
-        const zip = new AdmZip(buffer);
-        const zipEntries = zip.getEntries();
-        
-        // Tìm file embedded.mobileprovision trong file zip
-        const provisionEntry = zipEntries.find(entry => entry.entryName.includes('embedded.mobileprovision'));
-        
-        if (provisionEntry) {
-            // Đọc nội dung file dưới dạng text
-            const content = zip.readAsText(provisionEntry);
-            
-            // Dùng Regex để tìm dòng TeamName
-            // Cấu trúc thường là: <key>TeamName</key><string>Tên Team</string>
-            const match = content.match(/<key>TeamName<\/key>\s*<string>([^<]+)<\/string>/);
-            if (match && match[1]) {
-                return match[1];
-            }
-        }
-    } catch (e) {
-        console.error("Lỗi đọc Team Name:", e.message);
+// Hàm hỗ trợ tìm giá trị trong nội dung Plist/XML bằng Regex
+function getPlistValue(content, key) {
+    // Tìm cấu trúc: <key>KeyName</key> ... <string>Value</string>
+    const regex = new RegExp(`<key>${key}<\\/key>\\s*<string>([^<]+)<\\/string>`);
+    const match = content.match(regex);
+    return match ? match[1] : null;
+}
+
+// Hàm phân tích file IPA (Đọc Info.plist và MobileProvision)
+function parseIpa(buffer) {
+    const zip = new AdmZip(buffer);
+    const zipEntries = zip.getEntries();
+    
+    let appInfo = {
+        name: 'Unknown',
+        bundle: 'Unknown',
+        version: '1.0',
+        team: 'Không xác định'
+    };
+
+    // 1. Tìm và đọc Info.plist (Lấy Name, Bundle, Version)
+    const infoPlistEntry = zipEntries.find(entry => entry.entryName.match(/^Payload\/[^/]+\.app\/Info\.plist$/));
+    if (infoPlistEntry) {
+        const content = zip.readAsText(infoPlistEntry);
+        appInfo.name = getPlistValue(content, 'CFBundleDisplayName') || getPlistValue(content, 'CFBundleName') || 'Unknown App';
+        appInfo.bundle = getPlistValue(content, 'CFBundleIdentifier') || 'com.unknown';
+        appInfo.version = getPlistValue(content, 'CFBundleShortVersionString') || '1.0';
     }
-    return "Không xác định (App Store / TestFlight)";
+
+    // 2. Tìm và đọc embedded.mobileprovision (Lấy Team Name)
+    const provisionEntry = zipEntries.find(entry => entry.entryName.includes('embedded.mobileprovision'));
+    if (provisionEntry) {
+        const content = zip.readAsText(provisionEntry);
+        // Tìm dòng TeamName
+        const teamMatch = content.match(/<key>TeamName<\/key>\s*<string>([^<]+)<\/string>/);
+        if (teamMatch) {
+            appInfo.team = teamMatch[1];
+        }
+    }
+
+    return appInfo;
 }
 
 // Hàm xử lý chính
@@ -78,28 +94,22 @@ async function processIpa(ctx, url, fileNameInput) {
             }
         });
         
-        await updateProgress(`⚙️ **Đang phân tích chứng chỉ...**`);
+        await updateProgress(`⚙️ **Đang mổ xẻ file IPA...**`);
         
         const buffer = Buffer.from(res.data);
         
-        // 1. Lấy thông tin cơ bản (Tên, Bundle, Version)
-        const info = await ipaInfo(buffer);
-        const appName = info.content['CFBundleDisplayName'] || info.content['CFBundleName'] || 'Unknown';
-        const bundleId = info.content['CFBundleIdentifier'];
-        const version = info.content['CFBundleShortVersionString'];
+        // --- PHÂN TÍCH FILE (Dùng hàm mới) ---
+        const info = parseIpa(buffer); // Không dùng thư viện cũ nữa
         
-        // 2. Lấy thông tin Team Cert (MỚI)
-        const teamName = getTeamNameFromZip(buffer);
-
         const newFileName = `${Date.now()}.ipa`;
 
         // --- UPLOAD ---
-        await updateProgress(`⬆️ **Đang đẩy lên GitHub...**\nCert: _${teamName}_`);
+        await updateProgress(`⬆️ **Đang đẩy lên GitHub...**\nApp: ${info.name}\nCert: _${info.team}_`);
 
         // Upload IPA
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/IPA/${newFileName}`, 
             { 
-                message: `Upload ${appName} [${teamName}]`, 
+                message: `Upload ${info.name} [${info.team}]`, 
                 content: buffer.toString('base64') 
             },
             { 
@@ -110,10 +120,10 @@ async function processIpa(ctx, url, fileNameInput) {
         );
 
         // Upload Plist
-        const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>https://${GH_CONFIG.owner}.github.io/IPA/${newFileName}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${bundleId}</string><key>bundle-version</key><string>${version}</string><key>kind</key><string>software</string><key>title</key><string>${appName}</string></dict></dict></array></dict></plist>`).toString('base64');
+        const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>https://${GH_CONFIG.owner}.github.io/IPA/${newFileName}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
 
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/Plist/${newFileName.replace('.ipa', '.plist')}`, 
-            { message: `Create Plist ${appName}`, content: plistContent },
+            { message: `Create Plist ${info.name}`, content: plistContent },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
@@ -121,10 +131,10 @@ async function processIpa(ctx, url, fileNameInput) {
         const finalMsg = `
 ✅ **Upload hoàn tất!**
 
-📱 **App:** ${appName}
-🆔 **Bundle:** ${bundleId}
-🔢 **Ver:** ${version}
-👥 **Team:** ${teamName}
+📱 **App:** ${info.name}
+🆔 **Bundle:** ${info.bundle}
+🔢 **Ver:** ${info.version}
+👥 **Team:** ${info.team}
 
 📦 **Link tải:**
 https://${GH_CONFIG.owner}.github.io/IPA/${newFileName}
