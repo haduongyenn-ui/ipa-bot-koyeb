@@ -12,14 +12,28 @@ const GH_CONFIG = {
 };
 
 // ============================================================
-// 👇👇 CẤU HÌNH TÊN MIỀN & THƯ MỤC CỦA BẠN 👇👇
-const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; // Tên miền riêng
-const FOLDER_NAME = 'iPA';    // Tên thư mục chứa IPA (viết hoa/thường phải chuẩn)
-const PLIST_FOLDER = 'Plist'; // Tên thư mục chứa Plist
+// 👇 CẤU HÌNH CỦA BẠN 👇
+const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
+const FOLDER_NAME = 'iPA';    
+const PLIST_FOLDER = 'Plist'; 
 // ============================================================
 
-function sanitizeName(name) {
-    return name.replace(/[^a-zA-Z0-9]/g, "_");
+// Hàm tạo thanh hiển thị phần trăm (Ví dụ: ■■■■□□□□□□)
+function makeProgressBar(percent) {
+    const total = 10;
+    const filled = Math.round((percent / 100) * total);
+    const empty = total - filled;
+    return '■'.repeat(filled) + '□'.repeat(empty);
+}
+
+// Hàm tạo tên file ngẫu nhiên (chữ thường)
+function makeRandomString(length) {
+    let result = '';
+    const characters = 'abcdefghijklmnopqrstuvwxyz';
+    for (let i = 0; i < length; i++) {
+        result += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    return result;
 }
 
 function parseIpa(buffer) {
@@ -53,45 +67,64 @@ function parseIpa(buffer) {
 }
 
 async function processIpa(ctx, url, fileNameInput) {
-    const initialMsg = await ctx.reply(`📥 **Bot đã nhận file!**\nĐang tải về...`, { parse_mode: 'Markdown' });
+    const initialMsg = await ctx.reply(`📥 **Bot đã nhận file!**\nĐang kết nối...`, { parse_mode: 'Markdown' });
     const msgId = initialMsg.message_id;
     const chatId = ctx.chat.id;
     let lastUpdate = 0;
 
+    // Hàm update tin nhắn (Có giới hạn tốc độ để không bị chặn)
     const updateProgress = async (text) => {
         const now = Date.now();
-        if (now - lastUpdate > 2000 || text.includes('✅')) { 
-            try { await ctx.telegram.editMessageText(chatId, msgId, undefined, text, { parse_mode: 'Markdown' }); lastUpdate = now; } catch (e) {} 
+        // Chỉ sửa tin nhắn mỗi 1.5 giây hoặc khi hoàn tất
+        if (now - lastUpdate > 1500 || text.includes('✅')) { 
+            try { 
+                await ctx.telegram.editMessageText(chatId, msgId, undefined, text, { parse_mode: 'Markdown' }); 
+                lastUpdate = now; 
+            } catch (e) {} 
         }
     };
 
     try {
-        const res = await axios.get(url, { responseType: 'arraybuffer' });
-        const buffer = Buffer.from(res.data);
+        // 1. TẢI FILE VỀ (Có hiện %)
+        const res = await axios.get(url, { 
+            responseType: 'arraybuffer',
+            onDownloadProgress: (progressEvent) => {
+                if (progressEvent.total) {
+                    const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                    updateProgress(`⬇️ **Đang tải về:** ${percent}%\n\`${makeProgressBar(percent)}\``);
+                }
+            }
+        });
         
         await updateProgress(`⚙️ **Đang phân tích file...**`);
+        const buffer = Buffer.from(res.data);
         const info = parseIpa(buffer);
         
-        const safeName = sanitizeName(info.name);
-        const newFileName = `${safeName}_v${sanitizeName(info.version)}_${Date.now()}.ipa`;
+        const randomName = makeRandomString(5); 
+        const newFileName = `${randomName}.ipa`;
 
-        // Đường dẫn tương đối trên GitHub
         const ipaPath = `${FOLDER_NAME}/${newFileName}`;
         const plistPath = `${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
-        
-        // Link Direct sử dụng tên miền riêng của bạn
         const ipaDirectLink = `${CUSTOM_DOMAIN}/${ipaPath}`;
         const plistDirectLink = `${CUSTOM_DOMAIN}/${plistPath}`;
 
-        await updateProgress(`⬆️ **Đang upload lên ${CUSTOM_DOMAIN}...**`);
-
-        // Upload IPA
+        // 2. UPLOAD FILE LÊN GITHUB (Có hiện %)
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${ipaPath}`, 
             { message: `Upload ${info.name}`, content: buffer.toString('base64') },
-            { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity, maxContentLength: Infinity }
+            { 
+                headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, 
+                maxBodyLength: Infinity, 
+                maxContentLength: Infinity,
+                onUploadProgress: (progressEvent) => {
+                    if (progressEvent.total) {
+                        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                        updateProgress(`⬆️ **Đang upload:** ${percent}%\n\`${makeProgressBar(percent)}\``);
+                    }
+                }
+            }
         );
 
-        // Upload Plist (nội dung plist trỏ về tên miền riêng)
+        // 3. TẠO PLIST
         const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${ipaDirectLink}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
 
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${plistPath}`, 
@@ -99,13 +132,23 @@ async function processIpa(ctx, url, fileNameInput) {
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        const finalMsg = `✅ **Upload hoàn tất!**\n\n📁 **Vị trí:** \`${ipaPath}\`\n📱 **App:** ${info.name}\n🆔 **Bundle:** ${info.bundle}\n🔢 **Ver:** ${info.version}\n👥 **Team:** ${info.team}\n\n📦 **Link tải:**\n${ipaDirectLink}\n\n📲 **Cài trực tiếp:**\n\`itms-services://?action=download-manifest&url=${plistDirectLink}\``;
+        const finalMsg = `✅ **Upload hoàn tất!**\n\n📁 **File:** \`${ipaPath}\`\n📱 **App:** ${info.name}\n🆔 **Bundle:** ${info.bundle}\n🔢 **Ver:** ${info.version}\n👥 **Team:** ${info.team}\n\n📦 **Link tải:**\n${ipaDirectLink}\n\n📲 **Cài trực tiếp:**\n\`itms-services://?action=download-manifest&url=${plistDirectLink}\``;
         await ctx.telegram.editMessageText(chatId, msgId, undefined, finalMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
 
     } catch (e) {
         await updateProgress(`❌ **Lỗi:** ${e.message}`);
     }
 }
+
+bot.start((ctx) => {
+    ctx.reply(
+        '👋 **Xin chào!**\n\n' +
+        '🤖 Bot Upload IPA (Có hiện % Loading).\n' +
+        '🌐 Server: `download.khoindvn.io.vn`\n\n' +
+        '👉 Gửi file IPA hoặc Link để bắt đầu!',
+        { parse_mode: 'Markdown' }
+    );
+});
 
 bot.on('document', async (ctx) => {
     const doc = ctx.message.document;
