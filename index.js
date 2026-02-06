@@ -1,8 +1,10 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const AdmZip = require('adm-zip'); 
-const forge = require('node-forge'); 
 const http = require('http');
+const fs = require('fs');
+const { exec } = require('child_process'); // Gọi lệnh hệ thống
+const path = require('path');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
@@ -115,95 +117,73 @@ async function processIpa(ctx, url, fileNameInput) {
     }
 }
 
-// --- HÀM ĐỔI PASS P12 (ĐÃ FIX LỖI THÔNG BÁO) ---
+// --- HÀM ĐỔI PASS P12 (DÙNG OPENSSL - CÂN MỌI LOẠI FILE) ---
 async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
-    const msg = await ctx.reply('⏳ Đang xử lý file P12...');
+    const msg = await ctx.reply('⏳ Đang xử lý bằng OpenSSL...');
+    
+    // Tạo tên file tạm
+    const tempId = Date.now();
+    const inputPath = path.resolve(__dirname, `input_${tempId}.p12`);
+    const pemPath = path.resolve(__dirname, `temp_${tempId}.pem`);
+    const outputPath = path.resolve(__dirname, `output_${tempId}.p12`);
+
     try {
+        // 1. Tải file về và lưu vào ổ cứng
         const link = await ctx.telegram.getFileLink(fileId);
         const res = await axios.get(link.href, { responseType: 'arraybuffer' });
-        const p12Buffer = Buffer.from(res.data);
-        const p12Base64 = p12Buffer.toString('binary');
-        const p12Asn1 = forge.asn1.fromDer(p12Base64);
-        
-        let p12;
-        let cert = null;
-        let key = null;
+        fs.writeFileSync(inputPath, Buffer.from(res.data));
 
-        // BƯỚC 1: GIẢI MÃ (CỐ GẮNG BẮT MỌI LỖI)
-        try {
-            // strict = false để cố gắng đọc dù file hơi lạ
-            p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, oldPass);
-            
-            // Tìm Certificate
-            const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
-            if (certBags[forge.pki.oids.certBag] && certBags[forge.pki.oids.certBag].length > 0) {
-                cert = certBags[forge.pki.oids.certBag][0].cert;
+        // 2. Chạy lệnh OpenSSL: Giải nén P12 cũ ra file PEM (Chứa Key + Cert)
+        // -nodes: Không mã hóa file PEM tạm
+        // -legacy: Hỗ trợ cả chuẩn cũ (RC2/3DES) nếu server dùng OpenSSL 3
+        const cmdExport = `openssl pkcs12 -in "${inputPath}" -out "${pemPath}" -nodes -passin pass:"${oldPass}" -legacy`;
+
+        exec(cmdExport, (error, stdout, stderr) => {
+            if (error) {
+                console.error("Lỗi Export:", stderr);
+                // Dọn dẹp
+                try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
+                
+                return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, 
+                    '❌ **Mật khẩu CŨ không đúng!**\n(Hoặc file bị lỗi). Vui lòng thử lại.'
+                );
             }
 
-            // Tìm Private Key
-            const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-            if (keyBags[forge.pki.oids.pkcs8ShroudedKeyBag] && keyBags[forge.pki.oids.pkcs8ShroudedKeyBag].length > 0) {
-                key = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key;
-            } else {
-                const simpleKeyBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
-                 if (simpleKeyBags[forge.pki.oids.keyBag] && simpleKeyBags[forge.pki.oids.keyBag].length > 0) {
-                    key = simpleKeyBags[forge.pki.oids.keyBag][0].key;
+            // 3. Chạy lệnh OpenSSL: Đóng gói PEM thành P12 mới với mật khẩu mới
+            const cmdImport = `openssl pkcs12 -export -in "${pemPath}" -out "${outputPath}" -passout pass:"${newPass}" -legacy`;
+
+            exec(cmdImport, async (err2, out2, stderr2) => {
+                // Dọn file tạm PEM ngay lập tức
+                try { if (fs.existsSync(pemPath)) fs.unlinkSync(pemPath); } catch(e){}
+                try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
+
+                if (err2) {
+                    return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi đóng gói: ${stderr2}`);
                 }
-            }
 
-            // Nếu không lấy được Key hoặc Cert -> Coi như lỗi
-            if (!cert || !key) {
-                throw new Error("EMPTY_BAGS"); 
-            }
-
-        } catch (err) {
-            // Đây là nơi bắt cái lỗi "undefined (reading 'notBefore')"
-            console.log("Lỗi giải mã:", err.message);
-            return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, 
-                '❌ **Thất bại!**\n\n' +
-                'Có thể do:\n' +
-                '1. **Sai mật khẩu cũ** (Kiểm tra kỹ lại).\n' +
-                '2. File P12 dùng mã hóa đời mới (AES) mà bot chưa hỗ trợ.\n\n' +
-                '👉 Vui lòng thử lại với mật khẩu khác.'
-            );
-        }
-
-        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '⚙️ Mật khẩu đúng! Đang đóng gói lại...');
-
-        // BƯỚC 2: TẠO FILE MỚI
-        const newKeyBag = {
-            type: forge.pki.oids.pkcs8ShroudedKeyBag,
-            key: key
-        };
-
-        const newCertBag = {
-            type: forge.pki.oids.certBag,
-            cert: cert
-        };
-
-        const newP12Asn1 = forge.pkcs12.toPkcs12Asn1(
-            [newKeyBag],   // Keys
-            [newCertBag],  // Certs
-            newPass,       // Pass mới
-            { algorithm: '3des' } // Dùng chuẩn 3DES tương thích mọi thiết bị
-        );
-
-        const newP12Der = forge.asn1.toDer(newP12Asn1).getBytes();
-        const newP12Buffer = Buffer.from(newP12Der, 'binary');
-
-        // Gửi file
-        await ctx.replyWithDocument({
-            source: newP12Buffer,
-            filename: `NewPass_${fileName}`
-        }, {
-            caption: `✅ **Thành công!**\n\n🔑 Mật khẩu mới: \`${newPass}\``,
-            parse_mode: 'Markdown'
+                // 4. Gửi file kết quả
+                if (fs.existsSync(outputPath)) {
+                    await ctx.replyWithDocument({
+                        source: fs.createReadStream(outputPath),
+                        filename: `NewPass_${fileName}`
+                    }, {
+                        caption: `✅ **Đổi mật khẩu thành công!**\n\n🔑 Mật khẩu mới: \`${newPass}\``,
+                        parse_mode: 'Markdown'
+                    });
+                    
+                    // Xóa file kết quả
+                    fs.unlinkSync(outputPath);
+                    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+                } else {
+                    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ Lỗi: Không tạo được file đầu ra.');
+                }
+            });
         });
-
-        await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
 
     } catch (e) {
         console.error(e);
+        // Dọn dẹp nếu lỗi
+        try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
         await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi hệ thống: ${e.message}`);
     }
 }
@@ -214,7 +194,7 @@ bot.start((ctx) => {
     ctx.reply(
         '👋 **Xin chào!**\n\n' +
         '1️⃣ **Upload IPA:** Gửi file `.ipa` hoặc Link.\n' +
-        '2️⃣ **Đổi Pass P12:** Gửi file `.p12` để bắt đầu.\n\n' +
+        '2️⃣ **Đổi Pass P12:** Gửi file `.p12` (Hỗ trợ mọi loại mã hóa).\n\n' +
         '🚀 Start!',
         { parse_mode: 'Markdown' }
     );
