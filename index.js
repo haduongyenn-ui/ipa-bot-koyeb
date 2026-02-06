@@ -14,7 +14,7 @@ const GH_CONFIG = {
 
 // 👇 CẤU HÌNH 👇
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
-const FOLDER_NAME = 'IPA';    
+const FOLDER_NAME = 'iPA';    
 const PLIST_FOLDER = 'Plist'; 
 
 const userSessions = {};
@@ -115,7 +115,7 @@ async function processIpa(ctx, url, fileNameInput) {
     }
 }
 
-// --- HÀM ĐỔI PASS P12 (FIXED: XÂY MỚI FILE) ---
+// --- HÀM ĐỔI PASS P12 (ĐÃ SỬA LỖI create function) ---
 async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
     const msg = await ctx.reply('⏳ Đang tải file và xử lý...');
     try {
@@ -135,30 +135,37 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
 
         await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '⚙️ Mật khẩu đúng! Đang tái tạo chứng chỉ...');
 
-        // 1. LẤY CERT VÀ KEY RA KHỎI FILE CŨ
-        // Tìm túi chứa chứng chỉ (Certificate Bag)
+        // 1. LẤY CERT VÀ KEY TỪ FILE CŨ
         const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
         const cert = certBags[forge.pki.oids.certBag] ? certBags[forge.pki.oids.certBag][0].cert : null;
 
-        // Tìm túi chứa khóa riêng (Key Bag)
         const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
         const key = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag] ? keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key : null;
 
         if (!cert || !key) {
-             return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ **Lỗi file P12:** Không tìm thấy Key hoặc Cert hợp lệ bên trong.');
+             return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ **Lỗi file P12:** Không tìm thấy Key/Cert hợp lệ.');
         }
 
-        // 2. TẠO FILE P12 MỚI TINH (Fresh P12)
-        const newP12 = forge.pkcs12.create();
-        
-        // Thêm Key vào file mới
-        newP12.addPrivateKey(key);
-        
-        // Thêm Cert vào file mới
-        newP12.addCertificate(cert);
+        // 2. TẠO CÁC TÚI MỚI (New Bags)
+        // Đây là bước thay thế cho hàm create() bị lỗi
+        const newKeyBag = {
+            type: forge.pki.oids.pkcs8ShroudedKeyBag,
+            key: key
+        };
 
-        // 3. MÃ HÓA FILE MỚI BẰNG PASSWORD MỚI
-        const newP12Asn1 = newP12.toAsn1(newPass, { algorithm: '3des' });
+        const newCertBag = {
+            type: forge.pki.oids.certBag,
+            cert: cert
+        };
+
+        // 3. ĐÓNG GÓI THÀNH ASN1 VỚI PASSWORD MỚI
+        const newP12Asn1 = forge.pkcs12.toPkcs12Asn1(
+            [newKeyBag],   // Danh sách Keys
+            [newCertBag],  // Danh sách Certs
+            newPass,       // Mật khẩu mới
+            { algorithm: '3des' }
+        );
+
         const newP12Der = forge.asn1.toDer(newP12Asn1).getBytes();
         const newP12Buffer = Buffer.from(newP12Der, 'binary');
 
