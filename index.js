@@ -3,7 +3,7 @@ const axios = require('axios');
 const AdmZip = require('adm-zip'); 
 const http = require('http');
 const fs = require('fs');
-const { exec } = require('child_process'); // Gọi lệnh hệ thống
+const { exec } = require('child_process'); 
 const path = require('path');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -109,7 +109,21 @@ async function processIpa(ctx, url, fileNameInput) {
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        const finalMsg = `✅ **Upload hoàn tất!**\n\n📁 **File:** \`${ipaPath}\`\n📱 **App:** ${info.name}\n🆔 **Bundle:** ${info.bundle}\n🔢 **Ver:** ${info.version}\n👥 **Team:** ${info.team}\n\n📦 **Link tải:**\n${ipaDirectLink}\n\n📲 **Cài trực tiếp:**\n\`itms-services://?action=download-manifest&url=${plistDirectLink}\``;
+        // FORMAT TIN NHẮN IPA (CLICK ĐỂ COPY)
+        const finalMsg = `
+✅ **Upload hoàn tất!**
+
+📱 App: \`${info.name}\`
+🆔 Bundle: \`${info.bundle}\`
+🔢 Ver: \`${info.version}\`
+👥 Team: \`${info.team}\`
+
+📦 **Link tải:**
+${ipaDirectLink}
+
+📲 **Cài trực tiếp:**
+\`itms-services://?action=download-manifest&url=${plistDirectLink}\`
+`;
         await ctx.telegram.editMessageText(chatId, msgId, undefined, finalMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
 
     } catch (e) {
@@ -117,72 +131,89 @@ async function processIpa(ctx, url, fileNameInput) {
     }
 }
 
-// --- HÀM ĐỔI PASS P12 (DÙNG OPENSSL - CÂN MỌI LOẠI FILE) ---
+// --- HÀM ĐỔI PASS P12 (CÓ PHÂN TÍCH TEAM NAME) ---
 async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
     const msg = await ctx.reply('⏳ Đang xử lý bằng OpenSSL...');
     
-    // Tạo tên file tạm
     const tempId = Date.now();
     const inputPath = path.resolve(__dirname, `input_${tempId}.p12`);
     const pemPath = path.resolve(__dirname, `temp_${tempId}.pem`);
     const outputPath = path.resolve(__dirname, `output_${tempId}.p12`);
 
     try {
-        // 1. Tải file về và lưu vào ổ cứng
         const link = await ctx.telegram.getFileLink(fileId);
         const res = await axios.get(link.href, { responseType: 'arraybuffer' });
         fs.writeFileSync(inputPath, Buffer.from(res.data));
 
-        // 2. Chạy lệnh OpenSSL: Giải nén P12 cũ ra file PEM (Chứa Key + Cert)
-        // -nodes: Không mã hóa file PEM tạm
-        // -legacy: Hỗ trợ cả chuẩn cũ (RC2/3DES) nếu server dùng OpenSSL 3
+        // 1. Export P12 ra PEM (Giải mã)
         const cmdExport = `openssl pkcs12 -in "${inputPath}" -out "${pemPath}" -nodes -passin pass:"${oldPass}" -legacy`;
 
         exec(cmdExport, (error, stdout, stderr) => {
             if (error) {
                 console.error("Lỗi Export:", stderr);
-                // Dọn dẹp
                 try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
-                
                 return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, 
                     '❌ **Mật khẩu CŨ không đúng!**\n(Hoặc file bị lỗi). Vui lòng thử lại.'
                 );
             }
 
-            // 3. Chạy lệnh OpenSSL: Đóng gói PEM thành P12 mới với mật khẩu mới
-            const cmdImport = `openssl pkcs12 -export -in "${pemPath}" -out "${outputPath}" -passout pass:"${newPass}" -legacy`;
+            // 2. Đọc thông tin chứng chỉ từ file PEM vừa giải nén
+            const cmdInfo = `openssl x509 -in "${pemPath}" -noout -subject -enddate`;
+            exec(cmdInfo, (errInfo, stdoutInfo, stderrInfo) => {
+                let teamName = "Không xác định";
+                let expDate = "Unknown";
 
-            exec(cmdImport, async (err2, out2, stderr2) => {
-                // Dọn file tạm PEM ngay lập tức
-                try { if (fs.existsSync(pemPath)) fs.unlinkSync(pemPath); } catch(e){}
-                try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
+                if (!errInfo) {
+                    // Lọc lấy tên Team (CN = ...)
+                    // Mẫu: subject= /UID=.../CN=Apple Distribution: Name (TeamID)/...
+                    const cnMatch = stdoutInfo.match(/CN\s*=\s*([^/\n,]+)/);
+                    if (cnMatch) teamName = cnMatch[1].trim();
 
-                if (err2) {
-                    return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi đóng gói: ${stderr2}`);
+                    // Lọc ngày hết hạn (notAfter=...)
+                    const dateMatch = stdoutInfo.match(/notAfter=(.*)/);
+                    if (dateMatch) expDate = dateMatch[1].trim();
                 }
 
-                // 4. Gửi file kết quả
-                if (fs.existsSync(outputPath)) {
-                    await ctx.replyWithDocument({
-                        source: fs.createReadStream(outputPath),
-                        filename: `NewPass_${fileName}`
-                    }, {
-                        caption: `✅ **Đổi mật khẩu thành công!**\n\n🔑 Mật khẩu mới: \`${newPass}\``,
-                        parse_mode: 'Markdown'
-                    });
-                    
-                    // Xóa file kết quả
-                    fs.unlinkSync(outputPath);
-                    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
-                } else {
-                    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ Lỗi: Không tạo được file đầu ra.');
-                }
+                // 3. Đóng gói lại thành P12 mới
+                const cmdImport = `openssl pkcs12 -export -in "${pemPath}" -out "${outputPath}" -passout pass:"${newPass}" -legacy`;
+
+                exec(cmdImport, async (err2, out2, stderr2) => {
+                    try { if (fs.existsSync(pemPath)) fs.unlinkSync(pemPath); } catch(e){}
+                    try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
+
+                    if (err2) {
+                        return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi đóng gói: ${stderr2}`);
+                    }
+
+                    if (fs.existsSync(outputPath)) {
+                        // 4. Gửi kết quả (Định dạng COPY-ON-TOUCH)
+                        // Vì P12 không có Bundle/Ver nên mình ẩn đi hoặc để N/A
+                        await ctx.replyWithDocument({
+                            source: fs.createReadStream(outputPath),
+                            filename: `NewPass_${fileName}`
+                        }, {
+                            caption: 
+`✅ **Đổi mật khẩu thành công!**
+
+👥 Team: \`${teamName}\`
+📅 Exp: \`${expDate}\`
+🔑 Pass: \`${newPass}\`
+
+_Ấn vào chữ để sao chép_`,
+                            parse_mode: 'Markdown'
+                        });
+                        
+                        fs.unlinkSync(outputPath);
+                        await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+                    } else {
+                        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ Lỗi: Không tạo được file đầu ra.');
+                    }
+                });
             });
         });
 
     } catch (e) {
         console.error(e);
-        // Dọn dẹp nếu lỗi
         try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
         await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi hệ thống: ${e.message}`);
     }
@@ -194,7 +225,7 @@ bot.start((ctx) => {
     ctx.reply(
         '👋 **Xin chào!**\n\n' +
         '1️⃣ **Upload IPA:** Gửi file `.ipa` hoặc Link.\n' +
-        '2️⃣ **Đổi Pass P12:** Gửi file `.p12` (Hỗ trợ mọi loại mã hóa).\n\n' +
+        '2️⃣ **Đổi Pass P12:** Gửi file `.p12` để bắt đầu.\n\n' +
         '🚀 Start!',
         { parse_mode: 'Markdown' }
     );
