@@ -1,13 +1,3 @@
-{
-  "name": "ipa-uploader",
-  "version": "1.0.0",
-  "main": "index.js",
-  "dependencies": {
-    "telegraf": "^4.12.2",
-    "axios": "^1.4.0",
-    "ipa-extract-info": "^1.2.0"
-  },
-  "scripts": {
-    "start": "node index.js"
-  }
+"scripts": {
+  "start": "node index.js"
 }
