@@ -14,7 +14,7 @@ const GH_CONFIG = {
 
 // 👇 CẤU HÌNH 👇
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
-const FOLDER_NAME = 'iPA';    
+const FOLDER_NAME = 'IPA';    
 const PLIST_FOLDER = 'Plist'; 
 
 const userSessions = {};
@@ -115,9 +115,9 @@ async function processIpa(ctx, url, fileNameInput) {
     }
 }
 
-// --- HÀM ĐỔI PASS P12 (ĐÃ SỬA LỖI create function) ---
+// --- HÀM ĐỔI PASS P12 (ĐÃ FIX LỖI THÔNG BÁO) ---
 async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
-    const msg = await ctx.reply('⏳ Đang tải file và xử lý...');
+    const msg = await ctx.reply('⏳ Đang xử lý file P12...');
     try {
         const link = await ctx.telegram.getFileLink(fileId);
         const res = await axios.get(link.href, { responseType: 'arraybuffer' });
@@ -126,28 +126,51 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
         const p12Asn1 = forge.asn1.fromDer(p12Base64);
         
         let p12;
+        let cert = null;
+        let key = null;
+
+        // BƯỚC 1: GIẢI MÃ (CỐ GẮNG BẮT MỌI LỖI)
         try {
-            // Giải mã file cũ
-            p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, oldPass);
+            // strict = false để cố gắng đọc dù file hơi lạ
+            p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, oldPass);
+            
+            // Tìm Certificate
+            const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
+            if (certBags[forge.pki.oids.certBag] && certBags[forge.pki.oids.certBag].length > 0) {
+                cert = certBags[forge.pki.oids.certBag][0].cert;
+            }
+
+            // Tìm Private Key
+            const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+            if (keyBags[forge.pki.oids.pkcs8ShroudedKeyBag] && keyBags[forge.pki.oids.pkcs8ShroudedKeyBag].length > 0) {
+                key = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key;
+            } else {
+                const simpleKeyBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
+                 if (simpleKeyBags[forge.pki.oids.keyBag] && simpleKeyBags[forge.pki.oids.keyBag].length > 0) {
+                    key = simpleKeyBags[forge.pki.oids.keyBag][0].key;
+                }
+            }
+
+            // Nếu không lấy được Key hoặc Cert -> Coi như lỗi
+            if (!cert || !key) {
+                throw new Error("EMPTY_BAGS"); 
+            }
+
         } catch (err) {
-            return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ **Mật khẩu CŨ không đúng!**\nVui lòng thử lại.');
+            // Đây là nơi bắt cái lỗi "undefined (reading 'notBefore')"
+            console.log("Lỗi giải mã:", err.message);
+            return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, 
+                '❌ **Thất bại!**\n\n' +
+                'Có thể do:\n' +
+                '1. **Sai mật khẩu cũ** (Kiểm tra kỹ lại).\n' +
+                '2. File P12 dùng mã hóa đời mới (AES) mà bot chưa hỗ trợ.\n\n' +
+                '👉 Vui lòng thử lại với mật khẩu khác.'
+            );
         }
 
-        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '⚙️ Mật khẩu đúng! Đang tái tạo chứng chỉ...');
+        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '⚙️ Mật khẩu đúng! Đang đóng gói lại...');
 
-        // 1. LẤY CERT VÀ KEY TỪ FILE CŨ
-        const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
-        const cert = certBags[forge.pki.oids.certBag] ? certBags[forge.pki.oids.certBag][0].cert : null;
-
-        const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-        const key = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag] ? keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key : null;
-
-        if (!cert || !key) {
-             return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ **Lỗi file P12:** Không tìm thấy Key/Cert hợp lệ.');
-        }
-
-        // 2. TẠO CÁC TÚI MỚI (New Bags)
-        // Đây là bước thay thế cho hàm create() bị lỗi
+        // BƯỚC 2: TẠO FILE MỚI
         const newKeyBag = {
             type: forge.pki.oids.pkcs8ShroudedKeyBag,
             key: key
@@ -158,12 +181,11 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
             cert: cert
         };
 
-        // 3. ĐÓNG GÓI THÀNH ASN1 VỚI PASSWORD MỚI
         const newP12Asn1 = forge.pkcs12.toPkcs12Asn1(
-            [newKeyBag],   // Danh sách Keys
-            [newCertBag],  // Danh sách Certs
-            newPass,       // Mật khẩu mới
-            { algorithm: '3des' }
+            [newKeyBag],   // Keys
+            [newCertBag],  // Certs
+            newPass,       // Pass mới
+            { algorithm: '3des' } // Dùng chuẩn 3DES tương thích mọi thiết bị
         );
 
         const newP12Der = forge.asn1.toDer(newP12Asn1).getBytes();
@@ -182,7 +204,7 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
 
     } catch (e) {
         console.error(e);
-        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi: ${e.message}`);
+        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi hệ thống: ${e.message}`);
     }
 }
 
