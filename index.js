@@ -1,6 +1,7 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const AdmZip = require('adm-zip'); 
+const forge = require('node-forge'); // Thư viện xử lý P12
 const http = require('http');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -11,22 +12,18 @@ const GH_CONFIG = {
     token: process.env.GH_TOKEN
 };
 
-// ============================================================
-// 👇 CẤU HÌNH CỦA BẠN 👇
+// 👇 CẤU HÌNH 👇
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
-const FOLDER_NAME = 'iPA';    
+const FOLDER_NAME = 'IPA';    
 const PLIST_FOLDER = 'Plist'; 
-// ============================================================
 
-// Hàm tạo thanh hiển thị phần trăm (Ví dụ: ■■■■□□□□□□)
+// --- HÀM TIỆN ÍCH ---
 function makeProgressBar(percent) {
     const total = 10;
     const filled = Math.round((percent / 100) * total);
-    const empty = total - filled;
-    return '■'.repeat(filled) + '□'.repeat(empty);
+    return '■'.repeat(filled) + '□'.repeat(total - filled);
 }
 
-// Hàm tạo tên file ngẫu nhiên (chữ thường)
 function makeRandomString(length) {
     let result = '';
     const characters = 'abcdefghijklmnopqrstuvwxyz';
@@ -36,6 +33,7 @@ function makeRandomString(length) {
     return result;
 }
 
+// --- HÀM XỬ LÝ IPA ---
 function parseIpa(buffer) {
     try {
         const zip = new AdmZip(buffer);
@@ -67,64 +65,39 @@ function parseIpa(buffer) {
 }
 
 async function processIpa(ctx, url, fileNameInput) {
-    const initialMsg = await ctx.reply(`📥 **Bot đã nhận file!**\nĐang kết nối...`, { parse_mode: 'Markdown' });
+    const initialMsg = await ctx.reply(`📥 **Bot đã nhận file IPA!**\nĐang tải về...`, { parse_mode: 'Markdown' });
     const msgId = initialMsg.message_id;
     const chatId = ctx.chat.id;
     let lastUpdate = 0;
 
-    // Hàm update tin nhắn (Có giới hạn tốc độ để không bị chặn)
     const updateProgress = async (text) => {
         const now = Date.now();
-        // Chỉ sửa tin nhắn mỗi 1.5 giây hoặc khi hoàn tất
         if (now - lastUpdate > 1500 || text.includes('✅')) { 
-            try { 
-                await ctx.telegram.editMessageText(chatId, msgId, undefined, text, { parse_mode: 'Markdown' }); 
-                lastUpdate = now; 
-            } catch (e) {} 
+            try { await ctx.telegram.editMessageText(chatId, msgId, undefined, text, { parse_mode: 'Markdown' }); lastUpdate = now; } catch (e) {} 
         }
     };
 
     try {
-        // 1. TẢI FILE VỀ (Có hiện %)
-        const res = await axios.get(url, { 
-            responseType: 'arraybuffer',
-            onDownloadProgress: (progressEvent) => {
-                if (progressEvent.total) {
-                    const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-                    updateProgress(`⬇️ **Đang tải về:** ${percent}%\n\`${makeProgressBar(percent)}\``);
-                }
-            }
-        });
+        const res = await axios.get(url, { responseType: 'arraybuffer' });
+        const buffer = Buffer.from(res.data);
         
         await updateProgress(`⚙️ **Đang phân tích file...**`);
-        const buffer = Buffer.from(res.data);
         const info = parseIpa(buffer);
         
         const randomName = makeRandomString(5); 
         const newFileName = `${randomName}.ipa`;
-
         const ipaPath = `${FOLDER_NAME}/${newFileName}`;
         const plistPath = `${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
         const ipaDirectLink = `${CUSTOM_DOMAIN}/${ipaPath}`;
         const plistDirectLink = `${CUSTOM_DOMAIN}/${plistPath}`;
 
-        // 2. UPLOAD FILE LÊN GITHUB (Có hiện %)
+        await updateProgress(`⬆️ **Đang upload: ${newFileName}...**`);
+
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${ipaPath}`, 
             { message: `Upload ${info.name}`, content: buffer.toString('base64') },
-            { 
-                headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, 
-                maxBodyLength: Infinity, 
-                maxContentLength: Infinity,
-                onUploadProgress: (progressEvent) => {
-                    if (progressEvent.total) {
-                        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-                        updateProgress(`⬆️ **Đang upload:** ${percent}%\n\`${makeProgressBar(percent)}\``);
-                    }
-                }
-            }
+            { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity, maxContentLength: Infinity }
         );
 
-        // 3. TẠO PLIST
         const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${ipaDirectLink}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
 
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${plistPath}`, 
@@ -140,22 +113,99 @@ async function processIpa(ctx, url, fileNameInput) {
     }
 }
 
+// --- HÀM XỬ LÝ ĐỔI PASS P12 ---
+async function processP12(ctx, url, fileName, caption) {
+    if (!caption) {
+        return ctx.reply('⚠️ **Thiếu mật khẩu!**\n\nVui lòng gửi lại file .p12 kèm caption:\n`pass_cũ pass_mới`\n\nVí dụ: `123456 khoindvn`', { parse_mode: 'Markdown' });
+    }
+
+    const parts = caption.trim().split(/\s+/);
+    if (parts.length < 2) {
+        return ctx.reply('⚠️ **Sai cú pháp!**\nPhải có đủ 2 mật khẩu: `pass_cũ pass_mới`', { parse_mode: 'Markdown' });
+    }
+
+    const oldPass = parts[0];
+    const newPass = parts[1];
+    const msg = await ctx.reply('🔐 Đang tải và giải mã P12...');
+
+    try {
+        // Tải file P12
+        const res = await axios.get(url, { responseType: 'arraybuffer' });
+        const p12Buffer = Buffer.from(res.data);
+        const p12Base64 = p12Buffer.toString('binary');
+
+        // Giải mã P12 cũ
+        const p12Asn1 = forge.asn1.fromDer(p12Base64);
+        
+        // Thử giải mã với pass cũ
+        let p12;
+        try {
+            p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, oldPass);
+        } catch (err) {
+            return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ **Sai mật khẩu cũ!** Không thể mở file.');
+        }
+
+        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '⚙️ Đang mã hóa với mật khẩu mới...');
+
+        // Tạo P12 mới với pass mới
+        // Lưu ý: Chúng ta lấy các túi an toàn (safeContents) từ file cũ và đóng gói lại với pass mới
+        const newP12Asn1 = forge.pkcs12.toPkcs12Asn1(
+            p12.safeContents, 
+            p12.safeContents, 
+            newPass,
+            { algorithm: '3des' } // Chuẩn mã hóa tương thích tốt nhất
+        );
+
+        const newP12Der = forge.asn1.toDer(newP12Asn1).getBytes();
+        const newP12Buffer = Buffer.from(newP12Der, 'binary');
+
+        // Gửi lại file cho người dùng
+        await ctx.replyWithDocument({
+            source: newP12Buffer,
+            filename: `NewPass_${fileName}`
+        }, {
+            caption: `✅ **Đổi mật khẩu thành công!**\n\n🔑 Mật khẩu mới: \`${newPass}\``,
+            parse_mode: 'Markdown'
+        });
+
+        // Xóa tin nhắn loading
+        await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+
+    } catch (e) {
+        console.error(e);
+        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi: ${e.message}`);
+    }
+}
+
+// --- CÁC LỆNH BOT ---
 bot.start((ctx) => {
     ctx.reply(
         '👋 **Xin chào!**\n\n' +
-        '🤖 Bot Upload IPA (Có hiện % Loading).\n' +
-        '🌐 Server: `download.khoindvn.io.vn`\n\n' +
-        '👉 Gửi file IPA hoặc Link để bắt đầu!',
+        '1️⃣ **Upload IPA:** Gửi file `.ipa` (Max 20MB) hoặc Link.\n' +
+        '2️⃣ **Đổi Pass P12:** Gửi file `.p12` kèm caption: `pass_cũ pass_mới`.\n\n' +
+        '🚀 Bắt đầu thôi!',
         { parse_mode: 'Markdown' }
     );
 });
 
 bot.on('document', async (ctx) => {
     const doc = ctx.message.document;
-    if (!doc.file_name.toLowerCase().endsWith('.ipa')) return ctx.reply('⚠️ Chỉ nhận file .ipa');
-    if (doc.file_size > 20 * 1024 * 1024) return ctx.reply('❌ File > 20MB. Vui lòng gửi Link.');
+    const fileName = doc.file_name.toLowerCase();
+    const caption = ctx.message.caption || '';
     const link = await ctx.telegram.getFileLink(doc.file_id);
-    await processIpa(ctx, link.href, doc.file_name);
+
+    // XỬ LÝ IPA
+    if (fileName.endsWith('.ipa')) {
+        if (doc.file_size > 20 * 1024 * 1024) return ctx.reply('❌ File > 20MB. Vui lòng gửi Link.');
+        return await processIpa(ctx, link.href, doc.file_name);
+    }
+    
+    // XỬ LÝ P12
+    if (fileName.endsWith('.p12')) {
+        return await processP12(ctx, link.href, doc.file_name, caption);
+    }
+
+    ctx.reply('⚠️ Chỉ hỗ trợ file `.ipa` và `.p12`');
 });
 
 bot.on('text', async (ctx) => {
