@@ -29,7 +29,6 @@ function makeRandomString(length) {
     return result;
 }
 
-// Phân tích file IPA để lấy thông tin chi tiết
 function parseIpa(buffer) {
     try {
         const zip = new AdmZip(buffer);
@@ -60,9 +59,8 @@ function parseIpa(buffer) {
     }
 }
 
-// Xử lý Upload IPA
 async function processIpa(ctx, url) {
-    const initialMsg = await ctx.reply(`📥 **Đang tải file iPA...**`, { parse_mode: 'Markdown' });
+    const initialMsg = await ctx.reply(`📥 **Bot đã nhận file IPA!**\nĐang tải về...`, { parse_mode: 'Markdown' });
     try {
         const res = await axios.get(url, { responseType: 'arraybuffer' });
         const buffer = Buffer.from(res.data);
@@ -73,7 +71,7 @@ async function processIpa(ctx, url) {
         const ipaPath = `${FOLDER_NAME}/${newFileName}`;
         const plistPath = `${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
 
-        // Upload to GitHub
+        // Upload iPA to GitHub
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${ipaPath}`, 
             { message: `Upload ${info.name}`, content: buffer.toString('base64') },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity }
@@ -95,7 +93,6 @@ async function processIpa(ctx, url) {
     }
 }
 
-// --- XỬ LÝ P12 (ĐỔI MẬT KHẨU) ---
 async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
     const msg = await ctx.reply('⏳ Đang xử lý bằng OpenSSL...');
     const tempId = Date.now();
@@ -120,7 +117,7 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
                 const cmdImport = `openssl pkcs12 -export -in "${pemPath}" -out "${outputPath}" -passout pass:"${newPass}" -legacy`;
                 exec(cmdImport, async () => {
                     await ctx.replyWithDocument({ source: fs.createReadStream(outputPath), filename: `NewPass_${fileName}` }, {
-                        caption: `✅ **Đổi mật khẩu thành công!**\n\n👥 Team: \`${teamName}\`\n📅 Exp: \`${expDate}\`\n🔑 Pass: \`${newPass}\``,
+                        caption: `✅ **Đổi mật khẩu thành công!**\n\n👥 Team: \`${teamName}\`\n📅 Exp: \`${expDate}\`\n🔑 Pass: \`${newPass}\`\n\n_Ấn vào chữ để sao chép_`,
                         parse_mode: 'Markdown'
                     });
                     [inputPath, pemPath, outputPath].forEach(p => { if(fs.existsSync(p)) fs.unlinkSync(p); });
@@ -131,8 +128,8 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
     } catch (e) { ctx.reply(`❌ Lỗi hệ thống: ${e.message}`); }
 }
 
-// --- BOT LOGIC ---
-bot.start((ctx) => ctx.reply('👋 Gửi IPA để upload hoặc P12 để đổi pass!'));
+// --- BOT EVENTS ---
+bot.start((ctx) => ctx.reply('👋 Chào mừng! Gửi IPA để upload hoặc P12 để đổi pass.'));
 bot.on('document', async (ctx) => {
     const doc = ctx.message.document;
     const name = doc.file_name.toLowerCase();
@@ -162,9 +159,15 @@ bot.on('text', async (ctx) => {
 });
 bot.launch();
 
-// --- SERVER HTTP (WEBSITE + API BYPASS) ---
+// --- SERVER HTTP ---
 http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
+
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+        res.end(); return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/bypass') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
@@ -174,10 +177,11 @@ http.createServer(async (req, res) => {
                 const apiRes = await axios.get(`https://api.izen.lol/v1/bypass?url=${encodeURIComponent(targetUrl)}`, { headers: { 'x-api-key': IZEN_API_KEY } });
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 res.end(JSON.stringify(apiRes.data));
-            } catch (e) { res.writeHead(500); res.end(JSON.stringify({ message: "Lỗi API" })); }
+            } catch (e) { res.writeHead(500, { 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ message: "Lỗi API" })); }
         });
         return;
     }
+
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`
     <!DOCTYPE html>
@@ -185,28 +189,50 @@ http.createServer(async (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>iZen Hub</title>
+        <title>iZen Hub - Bypass & IPA</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script src='https://hairsromance.com/g_q7aDmbA6aQh_XP/NVmh3f9uxKIU/zfv1OaVj8ATdn9EoEUL/Sghia89fFxp9UPfhw/EFtHxA8b4FCkRQEKW/olNVY/jXefY8K8Jq3EcEhNQn/tgHzaiCkWC49/dyzeXgu5z'></script>
+        <script src="https://offeringchewjean.com/47/a9/13/47a913b960040fe7926ec0833cfc6151.js"></script>
         <style>body{background:#0f172a;color:white;font-family:sans-serif;}.glass{background:rgba(30,41,59,0.7);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);}</style>
     </head>
     <body class="py-10 px-4 flex flex-col items-center">
-        <div class="w-full max-w-md space-y-6">
-            <div class="glass p-6 rounded-3xl shadow-2xl">
-                <h1 class="text-xl font-bold text-sky-400 mb-4 text-center">LINK BYPASS</h1>
-                <input type="text" id="targetUrl" placeholder="Dán link..." class="w-full p-4 rounded-2xl bg-slate-900 border border-slate-700 mb-4 outline-none">
-                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-4 rounded-2xl">BYPASS NGAY</button>
-                <div id="result" class="hidden mt-6 p-4 rounded-2xl bg-black border border-slate-800">
-                    <div class="text-emerald-400 text-xs font-bold mb-2 uppercase text-center">Bypass thành công!</div>
+        <div class="w-full max-w-md space-y-6 text-center">
+            <div class="flex justify-center mb-4">
+                <script type="text/javascript">atOptions = {'key' : '3434ba1486d99ce41866b861388f09c5','format' : 'iframe','height' : 50,'width' : 320,'params' : {}};</script>
+                <script type="text/javascript" src="https://hairsromance.com/3434ba1486d99ce41866b861388f09c5/invoke.js"></script>
+            </div>
+            <div class="glass p-6 rounded-3xl shadow-xl">
+                <h1 class="text-2xl font-bold text-sky-400 mb-4 uppercase">Link Bypass</h1>
+                <input type="text" id="targetUrl" placeholder="Dán link cần bypass..." class="w-full p-4 rounded-2xl bg-slate-900 border border-slate-700 mb-4 outline-none focus:border-sky-500">
+                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-4 rounded-2xl active:scale-95 transition-all">BYPASS NGAY</button>
+                <div id="result" class="hidden mt-6 p-4 rounded-2xl bg-black border border-slate-800 text-left">
+                    <div class="text-emerald-400 text-[10px] font-bold mb-2 uppercase">✨ Bypass Thành Công!</div>
                     <div id="copyText" class="text-sky-300 font-mono text-sm break-all mb-4"></div>
-                    <button onclick="copyToClipboard()" class="w-full bg-slate-800 py-3 rounded-xl text-xs font-bold border border-slate-700">SAO CHÉP KẾT QUẢ</button>
+                    <button onclick="copyToClipboard()" class="w-full bg-slate-800 py-3 rounded-xl text-xs font-bold border border-slate-700">📋 SAO CHÉP KẾT QUẢ</button>
+                </div>
+            </div>
+            <div class="glass p-6 rounded-3xl shadow-xl">
+                <h2 class="text-xl font-bold text-emerald-400 mb-4 uppercase">Kho iPA Roblox</h2>
+                <div class="space-y-3">
+                    <a href="itms-services://?action=download-manifest&url=https://download.khoindvn.io.vn/Plist/sample.plist" class="block p-4 bg-slate-800 rounded-2xl hover:bg-slate-700 transition-all">Delta Executor (iPA)</a>
                 </div>
             </div>
         </div>
         <script>
-            async function doBypass(){const btn=document.getElementById('btn');const resDiv=document.getElementById('result');const val=document.getElementById('targetUrl').value;if(!val)return;btn.innerText='ĐANG CHẠY...';try{const r=await fetch('/api/bypass',{method:'POST',body:JSON.stringify({targetUrl:val})});const d=await r.json();if(d.result){resDiv.classList.remove('hidden');document.getElementById('copyText').innerText=d.result;}else{alert('Lỗi API');}}catch(e){alert('Lỗi kết nối');}btn.innerText='BYPASS NGAY';}
-            function copyToClipboard(){navigator.clipboard.writeText(document.getElementById('copyText').innerText);alert('Đã copy!');}
+            async function doBypass(){
+                const btn=document.getElementById('btn');const resDiv=document.getElementById('result');const val=document.getElementById('targetUrl').value;
+                if(!val)return alert('Dán link đã!');btn.innerText='ĐANG XỬ LÝ...';btn.disabled=true;
+                try{
+                    const r=await fetch('/api/bypass',{method:'POST',body:JSON.stringify({targetUrl:val})});
+                    const d=await r.json();
+                    if(d.result){resDiv.classList.remove('hidden');document.getElementById('copyText').innerText=d.result;}
+                    else{alert('Lỗi API');}
+                }catch(e){alert('Lỗi kết nối!');}
+                btn.innerText='BYPASS NGAY';btn.disabled=false;
+            }
+            function copyToClipboard(){navigator.clipboard.writeText(document.getElementById('copyText').innerText);alert('Đã sao chép!');}
         </script>
     </body>
-    </html>`);
+    </html>
+    `);
 }).listen(process.env.PORT || 8080);
