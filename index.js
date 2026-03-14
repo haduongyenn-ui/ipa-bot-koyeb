@@ -202,16 +202,24 @@ http.createServer(async (req, res) => {
             </div>
 
             <div class="glass p-6 rounded-3xl shadow-xl">
-                <h1 class="text-2xl font-bold text-sky-400 mb-4 uppercase">Link Bypass</h1>
-                <input type="text" id="targetUrl" placeholder="Dán link..." class="w-full p-4 rounded-2xl bg-slate-900 border border-slate-700 mb-4 outline-none focus:border-sky-500">
-                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-4 rounded-2xl active:scale-95 transition-all shadow-lg shadow-sky-500/20">BYPASS NGAY</button>
-                
-                <div id="result" class="hidden mt-6 p-4 rounded-2xl bg-black border border-slate-800 text-left">
-                    <div class="text-emerald-400 text-[10px] font-bold mb-2 uppercase text-center">✨ Bypass Thành Công!</div>
-                    <div id="copyText" class="text-sky-300 font-mono text-sm break-all mb-4"></div>
-                    <button onclick="copyToClipboard()" class="w-full bg-slate-800 py-3 rounded-xl text-xs font-bold border border-slate-700">📋 SAO CHÉP KẾT QUẢ</button>
-                </div>
-            </div>
+    <h1 class="text-2xl font-bold text-sky-400 mb-4 uppercase">khơindvn Bypass</h1>
+    
+    <input type="text" id="targetUrl" placeholder="Dán link cần bypass..." 
+        class="w-full p-4 rounded-2xl bg-slate-900 border border-slate-700 mb-2 outline-none focus:border-sky-500 transition-all">
+    
+    <p class="text-[10px] text-slate-400 mb-4 px-2 leading-relaxed">
+        Hỗ trợ: <span class="text-slate-300">Linkvertise, Loot-Link, Rekonise, Work.ink, Lockr.so, Shrtfly, Rinku.pro</span> và nhiều trình rút gọn link khác.
+    </p>
+
+    <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-4 rounded-2xl active:scale-95 transition-all shadow-lg shadow-sky-500/20">BYPASS NGAY</button>
+    
+    <div id="result" class="hidden mt-6 p-4 rounded-2xl bg-black border border-slate-800 text-left">
+        <div class="text-emerald-400 text-[10px] font-bold mb-2 uppercase text-center">✨ Bypass Thành Công!</div>
+        <div id="copyText" class="text-sky-300 font-mono text-sm break-all mb-4"></div>
+        <button onclick="copyToClipboard()" class="w-full bg-slate-800 py-3 rounded-xl text-xs font-bold border border-slate-700 uppercase">📋 Sao chép kết quả</button>
+    </div>
+</div>
+
 
                         <div class="glass p-6 rounded-3xl shadow-2xl">
                 <h2 class="text-xl font-black text-emerald-400 mb-6 text-center uppercase tracking-widest">File iPA Delta VNG</h2>
