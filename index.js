@@ -6,7 +6,9 @@ const fs = require('fs');
 const { exec } = require('child_process'); 
 const path = require('path');
 
+// --- CẤU HÌNH BIẾN MÔI TRƯỜNG ---
 const bot = new Telegraf(process.env.BOT_TOKEN);
+const IZEN_API_KEY = process.env.IZEN_API_KEY;
 
 const GH_CONFIG = {
     owner: 'haduongyenn-ui',
@@ -14,20 +16,13 @@ const GH_CONFIG = {
     token: process.env.GH_TOKEN
 };
 
-// 👇 CẤU HÌNH 👇
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
 const FOLDER_NAME = 'iPA';    
 const PLIST_FOLDER = 'Plist'; 
 
 const userSessions = {};
 
-// --- HÀM TIỆN ÍCH ---
-function makeProgressBar(percent) {
-    const total = 10;
-    const filled = Math.round((percent / 100) * total);
-    return '■'.repeat(filled) + '□'.repeat(total - filled);
-}
-
+// --- HÀM TIỆN ÍCH BOT ---
 function makeRandomString(length) {
     let result = '';
     const characters = 'abcdefghijklmnopqrstuvwxyz';
@@ -37,13 +32,11 @@ function makeRandomString(length) {
     return result;
 }
 
-// --- HÀM XỬ LÝ IPA ---
 function parseIpa(buffer) {
     try {
         const zip = new AdmZip(buffer);
         const zipEntries = zip.getEntries();
         let appInfo = { name: 'Unknown', bundle: 'Unknown', version: '1.0', team: 'Unknown' };
-
         const infoPlistEntry = zipEntries.find(entry => entry.entryName.match(/^Payload\/[^/]+\.app\/Info\.plist$/));
         if (infoPlistEntry) {
             const content = zip.readAsText(infoPlistEntry);
@@ -55,232 +48,128 @@ function parseIpa(buffer) {
             appInfo.bundle = getValue('CFBundleIdentifier') || 'com.unknown';
             appInfo.version = getValue('CFBundleShortVersionString') || '1.0';
         }
-
-        const provisionEntry = zipEntries.find(entry => entry.entryName.includes('embedded.mobileprovision'));
-        if (provisionEntry) {
-            const content = zip.readAsText(provisionEntry);
-            const teamMatch = content.match(/<key>TeamName<\/key>\s*<string>([^<]+)<\/string>/);
-            if (teamMatch) appInfo.team = teamMatch[1];
-        }
         return appInfo;
-    } catch (e) {
-        return { name: 'Error', bundle: 'Error', version: '0.0', team: 'Unknown' };
-    }
+    } catch (e) { return { name: 'Error', bundle: 'Error', version: '0.0', team: 'Unknown' }; }
 }
 
-async function processIpa(ctx, url, fileNameInput) {
-    const initialMsg = await ctx.reply(`📥 **Bot đã nhận file IPA!**\nĐang tải về...`, { parse_mode: 'Markdown' });
-    const msgId = initialMsg.message_id;
-    const chatId = ctx.chat.id;
-    let lastUpdate = 0;
-
-    const updateProgress = async (text) => {
-        const now = Date.now();
-        if (now - lastUpdate > 1500 || text.includes('✅')) { 
-            try { await ctx.telegram.editMessageText(chatId, msgId, undefined, text, { parse_mode: 'Markdown' }); lastUpdate = now; } catch (e) {} 
-        }
-    };
-
+async function processIpa(ctx, url) {
+    const initialMsg = await ctx.reply(`📥 Đang tải IPA...`);
     try {
         const res = await axios.get(url, { responseType: 'arraybuffer' });
         const buffer = Buffer.from(res.data);
-        
-        await updateProgress(`⚙️ **Đang phân tích file...**`);
         const info = parseIpa(buffer);
-        
         const randomName = makeRandomString(5); 
         const newFileName = `${randomName}.ipa`;
         const ipaPath = `${FOLDER_NAME}/${newFileName}`;
         const plistPath = `${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
-        const ipaDirectLink = `${CUSTOM_DOMAIN}/${ipaPath}`;
-        const plistDirectLink = `${CUSTOM_DOMAIN}/${plistPath}`;
-
-        await updateProgress(`⬆️ **Đang upload: ${newFileName}...**`);
 
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${ipaPath}`, 
             { message: `Upload ${info.name}`, content: buffer.toString('base64') },
-            { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity, maxContentLength: Infinity }
+            { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity }
         );
 
-        const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${ipaDirectLink}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
+        const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${CUSTOM_DOMAIN}/${ipaPath}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
 
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${plistPath}`, 
             { message: `Create Plist ${info.name}`, content: plistContent },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        // FORMAT TIN NHẮN IPA (CLICK ĐỂ COPY)
-        const finalMsg = `
-✅ **Upload hoàn tất!**
-
-📱 App: \`${info.name}\`
-🆔 Bundle: \`${info.bundle}\`
-🔢 Ver: \`${info.version}\`
-👥 Team: \`${info.team}\`
-
-📦 **Link tải:**
-${ipaDirectLink}
-
-📲 **Cài trực tiếp:**
-\`itms-services://?action=download-manifest&url=${plistDirectLink}\`
-`;
-        await ctx.telegram.editMessageText(chatId, msgId, undefined, finalMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
-
-    } catch (e) {
-        await updateProgress(`❌ **Lỗi:** ${e.message}`);
-    }
+        await ctx.telegram.editMessageText(ctx.chat.id, initialMsg.message_id, undefined, `✅ **Xong!**\nLink cài: \`itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}\``, { parse_mode: 'Markdown' });
+    } catch (e) { ctx.reply(`❌ Lỗi: ${e.message}`); }
 }
 
-// --- HÀM ĐỔI PASS P12 (CÓ PHÂN TÍCH TEAM NAME) ---
-async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
-    const msg = await ctx.reply('⏳ Đang xử lý bằng OpenSSL...');
-    
-    const tempId = Date.now();
-    const inputPath = path.resolve(__dirname, `input_${tempId}.p12`);
-    const pemPath = path.resolve(__dirname, `temp_${tempId}.pem`);
-    const outputPath = path.resolve(__dirname, `output_${tempId}.p12`);
-
-    try {
-        const link = await ctx.telegram.getFileLink(fileId);
-        const res = await axios.get(link.href, { responseType: 'arraybuffer' });
-        fs.writeFileSync(inputPath, Buffer.from(res.data));
-
-        // 1. Export P12 ra PEM (Giải mã)
-        const cmdExport = `openssl pkcs12 -in "${inputPath}" -out "${pemPath}" -nodes -passin pass:"${oldPass}" -legacy`;
-
-        exec(cmdExport, (error, stdout, stderr) => {
-            if (error) {
-                console.error("Lỗi Export:", stderr);
-                try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
-                return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, 
-                    '❌ **Mật khẩu CŨ không đúng!**\n(Hoặc file bị lỗi). Vui lòng thử lại.'
-                );
-            }
-
-            // 2. Đọc thông tin chứng chỉ từ file PEM vừa giải nén
-            const cmdInfo = `openssl x509 -in "${pemPath}" -noout -subject -enddate`;
-            exec(cmdInfo, (errInfo, stdoutInfo, stderrInfo) => {
-                let teamName = "Không xác định";
-                let expDate = "Unknown";
-
-                if (!errInfo) {
-                    // Lọc lấy tên Team (CN = ...)
-                    // Mẫu: subject= /UID=.../CN=Apple Distribution: Name (TeamID)/...
-                    const cnMatch = stdoutInfo.match(/CN\s*=\s*([^/\n,]+)/);
-                    if (cnMatch) teamName = cnMatch[1].trim();
-
-                    // Lọc ngày hết hạn (notAfter=...)
-                    const dateMatch = stdoutInfo.match(/notAfter=(.*)/);
-                    if (dateMatch) expDate = dateMatch[1].trim();
-                }
-
-                // 3. Đóng gói lại thành P12 mới
-                const cmdImport = `openssl pkcs12 -export -in "${pemPath}" -out "${outputPath}" -passout pass:"${newPass}" -legacy`;
-
-                exec(cmdImport, async (err2, out2, stderr2) => {
-                    try { if (fs.existsSync(pemPath)) fs.unlinkSync(pemPath); } catch(e){}
-                    try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
-
-                    if (err2) {
-                        return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi đóng gói: ${stderr2}`);
-                    }
-
-                    if (fs.existsSync(outputPath)) {
-                        // 4. Gửi kết quả (Định dạng COPY-ON-TOUCH)
-                        // Vì P12 không có Bundle/Ver nên mình ẩn đi hoặc để N/A
-                        await ctx.replyWithDocument({
-                            source: fs.createReadStream(outputPath),
-                            filename: `NewPass_${fileName}`
-                        }, {
-                            caption: 
-`✅ **Đổi mật khẩu thành công!**
-
-👥 Team: \`${teamName}\`
-📅 Exp: \`${expDate}\`
-🔑 Pass: \`${newPass}\`
-
-_Ấn vào chữ để sao chép_`,
-                            parse_mode: 'Markdown'
-                        });
-                        
-                        fs.unlinkSync(outputPath);
-                        await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
-                    } else {
-                        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '❌ Lỗi: Không tạo được file đầu ra.');
-                    }
-                });
-            });
-        });
-
-    } catch (e) {
-        console.error(e);
-        try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
-        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `❌ Lỗi hệ thống: ${e.message}`);
-    }
-}
-
-// --- XỬ LÝ SỰ KIỆN ---
-
-bot.start((ctx) => {
-    ctx.reply(
-        '👋 **Xin chào!**\n\n' +
-        '1️⃣ **Upload IPA:** Gửi file `.ipa` hoặc Link.\n' +
-        '2️⃣ **Đổi Pass P12:** Gửi file `.p12` để bắt đầu.\n\n' +
-        '🚀 Start!',
-        { parse_mode: 'Markdown' }
-    );
-});
-
+// --- LOGIC BOT TELEGRAM ---
+bot.start((ctx) => ctx.reply('👋 Gửi IPA hoặc Link để upload!'));
 bot.on('document', async (ctx) => {
     const doc = ctx.message.document;
-    const fileName = doc.file_name.toLowerCase();
-    
-    if (fileName.endsWith('.ipa')) {
+    if (doc.file_name.endsWith('.ipa')) {
         const link = await ctx.telegram.getFileLink(doc.file_id);
-        if (doc.file_size > 20 * 1024 * 1024) return ctx.reply('❌ File > 20MB. Vui lòng gửi Link.');
-        return await processIpa(ctx, link.href, doc.file_name);
+        await processIpa(ctx, link.href);
     }
-    
-    if (fileName.endsWith('.p12')) {
-        userSessions[ctx.chat.id] = {
-            step: 'WAITING_OLD_PASS',
-            fileId: doc.file_id,
-            fileName: doc.file_name
-        };
-        return ctx.reply('🔑 **Bước 1:** Nhập **Mật khẩu CŨ** của file này:', { parse_mode: 'Markdown' });
-    }
-
-    ctx.reply('⚠️ Chỉ hỗ trợ file `.ipa` và `.p12`');
 });
-
 bot.on('text', async (ctx) => {
-    const text = ctx.message.text.trim();
-    const chatId = ctx.chat.id;
-
-    if (userSessions[chatId]) {
-        const session = userSessions[chatId];
-
-        if (session.step === 'WAITING_OLD_PASS') {
-            session.oldPass = text;
-            session.step = 'WAITING_NEW_PASS'; 
-            return ctx.reply('🆕 **Bước 2:** Nhập **Mật khẩu MỚI** muốn đổi:', { parse_mode: 'Markdown' });
-        }
-
-        if (session.step === 'WAITING_NEW_PASS') {
-            const newPass = text;
-            const fileId = session.fileId;
-            const fileName = session.fileName;
-            const oldPass = session.oldPass;
-            delete userSessions[chatId]; 
-
-            return await executeP12Change(ctx, fileId, fileName, oldPass, newPass);
-        }
-    }
-
-    if (text.startsWith('http')) {
-        await processIpa(ctx, text, 'URL');
-    }
+    if (ctx.message.text.startsWith('http')) await processIpa(ctx, ctx.message.text);
 });
 
-http.createServer((req, res) => res.end('Bot Alive')).listen(process.env.PORT || 8080);
 bot.launch();
+
+// --- TÍCH HỢP SERVER WEBSITE (CHO KOYEB) ---
+http.createServer(async (req, res) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+
+    // API BYPASS CHO WEB
+    if (req.method === 'POST' && url.pathname === '/api/bypass') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', async () => {
+            try {
+                const { targetUrl } = JSON.parse(body);
+                const apiRes = await axios.get(`https://api.izen.lol/v1/bypass?url=${encodeURIComponent(targetUrl)}`, {
+                    headers: { 'x-api-key': IZEN_API_KEY }
+                });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(apiRes.data));
+            } catch (e) {
+                res.writeHead(500);
+                res.end(JSON.stringify({ message: "Lỗi API" }));
+            }
+        });
+        return;
+    }
+
+    // GIAO DIỆN WEBSITE
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>iZen Hub - Bypass & IPA</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            body { background: #0f172a; color: white; font-family: sans-serif; }
+            .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        </style>
+    </head>
+    <body class="py-10 px-4 flex flex-col items-center">
+        <div class="w-full max-w-md space-y-6">
+            <div class="glass p-6 rounded-2xl shadow-xl text-center">
+                <h1 class="text-2xl font-bold text-sky-400 mb-4">🔗 Link Bypass</h1>
+                <input type="text" id="targetUrl" placeholder="Dán link cần bypass..." class="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 mb-4 outline-none focus:border-sky-500">
+                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-3 rounded-xl hover:bg-sky-400 transition-all">Bypass Ngay</button>
+                <div id="result" class="hidden mt-4 p-3 bg-black rounded text-sky-300 break-all text-xs font-mono text-left"></div>
+            </div>
+
+            <div class="glass p-6 rounded-2xl shadow-xl">
+                <h2 class="text-xl font-bold text-emerald-400 mb-4 text-center text-emerald-400">📦 Tải IPA</h2>
+                <div class="space-y-3">
+                    <a href="itms-services://?action=download-manifest&url=YOUR_PLIST_URL" class="block p-4 bg-slate-800 rounded-xl text-center hover:bg-slate-700">Tải Delta IPA</a>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            async function doBypass() {
+                const btn = document.getElementById('btn');
+                const resDiv = document.getElementById('result');
+                const val = document.getElementById('targetUrl').value;
+                if(!val) return;
+                btn.innerText = 'Đang bypass...';
+                try {
+                    const response = await fetch('/api/bypass', {
+                        method: 'POST',
+                        body: JSON.stringify({ targetUrl: val })
+                    });
+                    const data = await response.json();
+                    resDiv.classList.remove('hidden');
+                    resDiv.innerText = data.result || data.message || 'Lỗi!';
+                } catch(e) { alert('Lỗi kết nối!'); }
+                btn.innerText = 'Bypass Ngay';
+            }
+        </script>
+    </body>
+    </html>
+    `);
+}).listen(process.env.PORT || 8080);
