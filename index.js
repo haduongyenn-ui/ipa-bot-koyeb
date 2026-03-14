@@ -19,8 +19,9 @@ const GH_CONFIG = {
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
 const FOLDER_NAME = 'iPA';    
 const PLIST_FOLDER = 'Plist'; 
+const userSessions = {};
 
-// --- HÀM TIỆN ÍCH BOT ---
+// --- HÀM TIỆN ÍCH ---
 function makeRandomString(length) {
     let result = '';
     const characters = 'abcdefghijklmnopqrstuvwxyz';
@@ -28,11 +29,13 @@ function makeRandomString(length) {
     return result;
 }
 
+// Phân tích file IPA để lấy thông tin chi tiết
 function parseIpa(buffer) {
     try {
         const zip = new AdmZip(buffer);
         const zipEntries = zip.getEntries();
-        let appInfo = { name: 'Unknown', bundle: 'Unknown', version: '1.0' };
+        let appInfo = { name: 'Unknown', bundle: 'Unknown', version: '1.0', team: 'Unknown' };
+
         const infoPlistEntry = zipEntries.find(entry => entry.entryName.match(/^Payload\/[^/]+\.app\/Info\.plist$/));
         if (infoPlistEntry) {
             const content = zip.readAsText(infoPlistEntry);
@@ -44,83 +47,137 @@ function parseIpa(buffer) {
             appInfo.bundle = getValue('CFBundleIdentifier') || 'com.unknown';
             appInfo.version = getValue('CFBundleShortVersionString') || '1.0';
         }
+
+        const provisionEntry = zipEntries.find(entry => entry.entryName.includes('embedded.mobileprovision'));
+        if (provisionEntry) {
+            const content = zip.readAsText(provisionEntry);
+            const teamMatch = content.match(/<key>TeamName<\/key>\s*<string>([^<]+)<\/string>/);
+            if (teamMatch) appInfo.team = teamMatch[1];
+        }
         return appInfo;
-    } catch (e) { return { name: 'Error', bundle: 'Error', version: '0.0' }; }
+    } catch (e) {
+        return { name: 'Error', bundle: 'Error', version: '0.0', team: 'Unknown' };
+    }
 }
 
+// Xử lý Upload IPA
 async function processIpa(ctx, url) {
-    const initialMsg = await ctx.reply(`📥 Đang xử lý iPA...`);
+    const initialMsg = await ctx.reply(`📥 **Đang tải file iPA...**`, { parse_mode: 'Markdown' });
     try {
         const res = await axios.get(url, { responseType: 'arraybuffer' });
         const buffer = Buffer.from(res.data);
         const info = parseIpa(buffer);
+        
         const randomName = makeRandomString(5); 
         const newFileName = `${randomName}.ipa`;
-        
-        // Upload iPA to GitHub
-        await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${FOLDER_NAME}/${newFileName}`, 
+        const ipaPath = `${FOLDER_NAME}/${newFileName}`;
+        const plistPath = `${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
+
+        // Upload to GitHub
+        await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${ipaPath}`, 
             { message: `Upload ${info.name}`, content: buffer.toString('base64') },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity }
         );
 
         // Create Plist
-        const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${CUSTOM_DOMAIN}/${FOLDER_NAME}/${newFileName}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
+        const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${CUSTOM_DOMAIN}/${ipaPath}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
 
-        await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`, 
+        await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${plistPath}`, 
             { message: `Create Plist ${info.name}`, content: plistContent },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        const plistLink = `itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
-        await ctx.telegram.editMessageText(ctx.chat.id, initialMsg.message_id, undefined, `✅ **Thành công!**\n\n📱 App: ${info.name}\n🔗 Link cài đặt:\n\`${plistLink}\``, { parse_mode: 'Markdown' });
-    } catch (e) { ctx.reply(`❌ Lỗi: ${e.message}`); }
+        const finalMsg = `✅ **Upload hoàn tất!**\n\n📱 App: \`${info.name}\`\n🆔 Bundle: \`${info.bundle}\`\n🔢 Ver: \`${info.version}\`\n👥 Team: \`${info.team}\`\n\n📦 **Link tải:**\n${CUSTOM_DOMAIN}/${ipaPath}\n\n📲 **Cài trực tiếp:**\n\`itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}\``;
+        
+        await ctx.telegram.editMessageText(ctx.chat.id, initialMsg.message_id, undefined, finalMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
+    } catch (e) {
+        await ctx.reply(`❌ Lỗi: ${e.message}`);
+    }
 }
 
-// --- BOT EVENTS ---
-bot.start((ctx) => ctx.reply('🚀 Bot iPA & P12 Ready!'));
+// --- XỬ LÝ P12 (ĐỔI MẬT KHẨU) ---
+async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
+    const msg = await ctx.reply('⏳ Đang xử lý bằng OpenSSL...');
+    const tempId = Date.now();
+    const inputPath = path.resolve(__dirname, `input_${tempId}.p12`);
+    const pemPath = path.resolve(__dirname, `temp_${tempId}.pem`);
+    const outputPath = path.resolve(__dirname, `output_${tempId}.p12`);
+
+    try {
+        const link = await ctx.telegram.getFileLink(fileId);
+        const res = await axios.get(link.href, { responseType: 'arraybuffer' });
+        fs.writeFileSync(inputPath, Buffer.from(res.data));
+
+        const cmdExport = `openssl pkcs12 -in "${inputPath}" -out "${pemPath}" -nodes -passin pass:"${oldPass}" -legacy`;
+        exec(cmdExport, (error) => {
+            if (error) return ctx.reply('❌ Mật khẩu CŨ không đúng!');
+
+            const cmdInfo = `openssl x509 -in "${pemPath}" -noout -subject -enddate`;
+            exec(cmdInfo, (errInfo, stdoutInfo) => {
+                let teamName = (stdoutInfo.match(/CN\s*=\s*([^/\n,]+)/) || [])[1] || "Unknown";
+                let expDate = (stdoutInfo.match(/notAfter=(.*)/) || [])[1] || "Unknown";
+
+                const cmdImport = `openssl pkcs12 -export -in "${pemPath}" -out "${outputPath}" -passout pass:"${newPass}" -legacy`;
+                exec(cmdImport, async () => {
+                    await ctx.replyWithDocument({ source: fs.createReadStream(outputPath), filename: `NewPass_${fileName}` }, {
+                        caption: `✅ **Đổi mật khẩu thành công!**\n\n👥 Team: \`${teamName}\`\n📅 Exp: \`${expDate}\`\n🔑 Pass: \`${newPass}\``,
+                        parse_mode: 'Markdown'
+                    });
+                    [inputPath, pemPath, outputPath].forEach(p => { if(fs.existsSync(p)) fs.unlinkSync(p); });
+                    ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+                });
+            });
+        });
+    } catch (e) { ctx.reply(`❌ Lỗi hệ thống: ${e.message}`); }
+}
+
+// --- BOT LOGIC ---
+bot.start((ctx) => ctx.reply('👋 Gửi IPA để upload hoặc P12 để đổi pass!'));
 bot.on('document', async (ctx) => {
-    if (ctx.message.document.file_name.endsWith('.ipa')) {
-        const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
+    const doc = ctx.message.document;
+    const name = doc.file_name.toLowerCase();
+    if (name.endsWith('.ipa')) {
+        const link = await ctx.telegram.getFileLink(doc.file_id);
         await processIpa(ctx, link.href);
+    } else if (name.endsWith('.p12')) {
+        userSessions[ctx.chat.id] = { step: 'OLD', fileId: doc.file_id, fileName: doc.file_name };
+        ctx.reply('🔑 Nhập **Mật khẩu CŨ**:');
     }
 });
 bot.on('text', async (ctx) => {
-    if (ctx.message.text.startsWith('http')) await processIpa(ctx, ctx.message.text);
+    const text = ctx.message.text.trim();
+    const session = userSessions[ctx.chat.id];
+    if (session) {
+        if (session.step === 'OLD') {
+            session.oldPass = text; session.step = 'NEW';
+            ctx.reply('🆕 Nhập **Mật khẩu MỚI**:');
+        } else if (session.step === 'NEW') {
+            const { fileId, fileName, oldPass } = session;
+            delete userSessions[ctx.chat.id];
+            await executeP12Change(ctx, fileId, fileName, oldPass, text);
+        }
+    } else if (text.startsWith('http')) {
+        await processIpa(ctx, text);
+    }
 });
 bot.launch();
 
-// --- SERVER HTTP (WEBSITE + API) ---
+// --- SERVER HTTP (WEBSITE + API BYPASS) ---
 http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-
-    // XỬ LÝ OPTIONS (CORS)
-    if (req.method === 'OPTIONS') {
-        res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
-        res.end();
-        return;
-    }
-
-    // API BYPASS
     if (req.method === 'POST' && url.pathname === '/api/bypass') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', async () => {
             try {
                 const { targetUrl } = JSON.parse(body);
-                const apiRes = await axios.get(`https://api.izen.lol/v1/bypass?url=${encodeURIComponent(targetUrl)}`, {
-                    headers: { 'x-api-key': IZEN_API_KEY }
-                });
+                const apiRes = await axios.get(`https://api.izen.lol/v1/bypass?url=${encodeURIComponent(targetUrl)}`, { headers: { 'x-api-key': IZEN_API_KEY } });
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 res.end(JSON.stringify(apiRes.data));
-            } catch (e) {
-                res.writeHead(500, { 'Access-Control-Allow-Origin': '*' });
-                res.end(JSON.stringify({ message: "Lỗi kết nối API iZen" }));
-            }
+            } catch (e) { res.writeHead(500); res.end(JSON.stringify({ message: "Lỗi API" })); }
         });
         return;
     }
-
-    // GIAO DIỆN WEB
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`
     <!DOCTYPE html>
@@ -128,78 +185,28 @@ http.createServer(async (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>khơindvn - Bypass & iPA</title>
+        <title>iZen Hub</title>
         <script src="https://cdn.tailwindcss.com"></script>
-        
         <script src='https://hairsromance.com/g_q7aDmbA6aQh_XP/NVmh3f9uxKIU/zfv1OaVj8ATdn9EoEUL/Sghia89fFxp9UPfhw/EFtHxA8b4FCkRQEKW/olNVY/jXefY8K8Jq3EcEhNQn/tgHzaiCkWC49/dyzeXgu5z'></script>
-        <script src="https://offeringchewjean.com/47/a9/13/47a913b960040fe7926ec0833cfc6151.js"></script>
-
-        <style>
-            body { background: #0f172a; color: white; font-family: sans-serif; }
-            .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
-        </style>
+        <style>body{background:#0f172a;color:white;font-family:sans-serif;}.glass{background:rgba(30,41,59,0.7);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);}</style>
     </head>
-    <body class="py-10 px-4 flex flex-col items-center min-h-screen">
+    <body class="py-10 px-4 flex flex-col items-center">
         <div class="w-full max-w-md space-y-6">
-            
-            <div class="flex justify-center">
-                <script type="text/javascript">
-                    atOptions = { 'key' : '3434ba1486d99ce41866b861388f09c5', 'format' : 'iframe', 'height' : 50, 'width' : 320, 'params' : {} };
-                </script>
-                <script type="text/javascript" src="https://hairsromance.com/3434ba1486d99ce41866b861388f09c5/invoke.js"></script>
-            </div>
-
             <div class="glass p-6 rounded-3xl shadow-2xl">
-                <h1 class="text-2xl font-black text-sky-400 mb-6 text-center uppercase tracking-widest">Link Bypass</h1>
-                <input type="text" id="targetUrl" placeholder="Dán link vào đây..." 
-                    class="w-full p-4 rounded-2xl bg-slate-900 border border-slate-700 mb-4 outline-none focus:border-sky-500 transition-all">
-                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-black py-4 rounded-2xl active:scale-95 transition-all shadow-lg shadow-sky-500/20">BYPASS NGAY</button>
-                
-                <div id="result" class="hidden mt-6 p-4 rounded-2xl bg-slate-950 border border-slate-800 text-left">
-                    <div class="text-emerald-400 text-[10px] font-bold mb-2 uppercase">✨ Thành công!</div>
+                <h1 class="text-xl font-bold text-sky-400 mb-4 text-center">LINK BYPASS</h1>
+                <input type="text" id="targetUrl" placeholder="Dán link..." class="w-full p-4 rounded-2xl bg-slate-900 border border-slate-700 mb-4 outline-none">
+                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-4 rounded-2xl">BYPASS NGAY</button>
+                <div id="result" class="hidden mt-6 p-4 rounded-2xl bg-black border border-slate-800">
+                    <div class="text-emerald-400 text-xs font-bold mb-2 uppercase text-center">Bypass thành công!</div>
                     <div id="copyText" class="text-sky-300 font-mono text-sm break-all mb-4"></div>
                     <button onclick="copyToClipboard()" class="w-full bg-slate-800 py-3 rounded-xl text-xs font-bold border border-slate-700">SAO CHÉP KẾT QUẢ</button>
                 </div>
             </div>
-
-            <div class="glass p-6 rounded-3xl shadow-2xl">
-                <h2 class="text-xl font-black text-emerald-400 mb-6 text-center uppercase tracking-widest">File iPA Roblox</h2>
-                <div class="space-y-3">
-                    <a href="https://cdn.khoindvn.io.vn/DeltaVN.ipa" 
-                       class="flex items-center justify-between p-4 bg-slate-800/50 rounded-2xl hover:bg-slate-700 transition-all border border-white/5">
-                        <span class="font-bold text-sm">Delta Executor</span>
-                        <span class="text-[10px] bg-emerald-500 text-white px-3 py-1 rounded-full">Dowload File</span>
-                    </a>
-                </div>
-            </div>
         </div>
-
         <script>
-            async function doBypass() {
-                const btn = document.getElementById('btn');
-                const resDiv = document.getElementById('result');
-                const val = document.getElementById('targetUrl').value;
-                if(!val) return alert('Dán link đã!');
-                btn.innerText = 'ĐANG XỬ LÝ...'; btn.disabled = true;
-                try {
-                    const response = await fetch('/api/bypass', {
-                        method: 'POST',
-                        body: JSON.stringify({ targetUrl: val })
-                    });
-                    const data = await response.json();
-                    if(data.result) {
-                        resDiv.classList.remove('hidden');
-                        document.getElementById('copyText').innerText = data.result;
-                    } else { alert('Lỗi: ' + (data.message || 'Không rõ')); }
-                } catch(e) { alert('Lỗi kết nối!'); }
-                btn.innerText = 'BYPASS NGAY'; btn.disabled = false;
-            }
-            function copyToClipboard() {
-                navigator.clipboard.writeText(document.getElementById('copyText').innerText);
-                alert('Đã sao chép!');
-            }
+            async function doBypass(){const btn=document.getElementById('btn');const resDiv=document.getElementById('result');const val=document.getElementById('targetUrl').value;if(!val)return;btn.innerText='ĐANG CHẠY...';try{const r=await fetch('/api/bypass',{method:'POST',body:JSON.stringify({targetUrl:val})});const d=await r.json();if(d.result){resDiv.classList.remove('hidden');document.getElementById('copyText').innerText=d.result;}else{alert('Lỗi API');}}catch(e){alert('Lỗi kết nối');}btn.innerText='BYPASS NGAY';}
+            function copyToClipboard(){navigator.clipboard.writeText(document.getElementById('copyText').innerText);alert('Đã copy!');}
         </script>
     </body>
-    </html>
-    `);
+    </html>`);
 }).listen(process.env.PORT || 8080);
