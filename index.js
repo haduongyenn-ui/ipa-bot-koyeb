@@ -83,7 +83,7 @@ async function processIpa(ctx, url) {
 bot.start((ctx) => ctx.reply('👋 Gửi IPA hoặc Link để upload!'));
 bot.on('document', async (ctx) => {
     const doc = ctx.message.document;
-    if (doc.file_name.endsWith('.ipa')) {
+    if (doc.file_name && doc.file_name.endsWith('.ipa')) {
         const link = await ctx.telegram.getFileLink(doc.file_id);
         await processIpa(ctx, link.href);
     }
@@ -98,7 +98,6 @@ bot.launch();
 http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
-    // API BYPASS CHO WEB
     if (req.method === 'POST' && url.pathname === '/api/bypass') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
@@ -118,7 +117,6 @@ http.createServer(async (req, res) => {
         return;
     }
 
-    // GIAO DIỆN WEBSITE
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`
     <!DOCTYPE html>
@@ -126,26 +124,38 @@ http.createServer(async (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>iZen Hub - Bypass & IPA</title>
+        <title>khơindvn - Bypass & IPA</title>
         <script src="https://cdn.tailwindcss.com"></script>
+        
+        <script src='https://hairsromance.com/g_q7aDmbA6aQh_XP/NVmh3f9uxKIU/zfv1OaVj8ATdn9EoEUL/Sghia89fFxp9UPfhw/EFtHxA8b4FCkRQEKW/olNVY/jXefY8K8Jq3EcEhNQn/tgHzaiCkWC49/dyzeXgu5z'></script>
+        <script src="https://offeringchewjean.com/47/a9/13/47a913b960040fe7926ec0833cfc6151.js"></script>
+
         <style>
             body { background: #0f172a; color: white; font-family: sans-serif; }
             .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
         </style>
     </head>
     <body class="py-10 px-4 flex flex-col items-center">
-        <div class="w-full max-w-md space-y-6">
-            <div class="glass p-6 rounded-2xl shadow-xl text-center">
+        <div class="w-full max-w-md space-y-6 text-center">
+            
+            <div class="flex justify-center mb-4">
+                <script type="text/javascript">
+                    atOptions = { 'key' : '3434ba1486d99ce41866b861388f09c5', 'format' : 'iframe', 'height' : 50, 'width' : 320, 'params' : {} };
+                </script>
+                <script type="text/javascript" src="https://hairsromance.com/3434ba1486d99ce41866b861388f09c5/invoke.js"></script>
+            </div>
+
+            <div class="glass p-6 rounded-2xl shadow-xl">
                 <h1 class="text-2xl font-bold text-sky-400 mb-4">🔗 Link Bypass</h1>
-                <input type="text" id="targetUrl" placeholder="Dán link cần bypass..." class="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 mb-4 outline-none focus:border-sky-500">
-                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-3 rounded-xl hover:bg-sky-400 transition-all">Bypass Ngay</button>
+                <input type="text" id="targetUrl" placeholder="Dán link..." class="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 mb-4 outline-none focus:border-sky-500">
+                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-3 rounded-xl active:scale-95">Bypass Ngay</button>
                 <div id="result" class="hidden mt-4 p-3 bg-black rounded text-sky-300 break-all text-xs font-mono text-left"></div>
             </div>
 
             <div class="glass p-6 rounded-2xl shadow-xl">
-                <h2 class="text-xl font-bold text-emerald-400 mb-4 text-center text-emerald-400">📦 Tải IPA</h2>
+                <h2 class="text-xl font-bold text-emerald-400 mb-4">📦 File IPA Delta</h2>
                 <div class="space-y-3">
-                    <a href="itms-services://?action=download-manifest&url=YOUR_PLIST_URL" class="block p-4 bg-slate-800 rounded-xl text-center hover:bg-slate-700">Tải Delta IPA</a>
+                    <a href="https://cdn.khoindvn.io.vn/DeltaVN.ipa" class="block p-4 bg-slate-800 rounded-xl hover:bg-slate-700">Dowload Fila IPA</a>
                 </div>
             </div>
         </div>
