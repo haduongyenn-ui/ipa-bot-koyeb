@@ -214,12 +214,12 @@ http.createServer(async (req, res) => {
             </div>
 
                         <div class="glass p-6 rounded-3xl shadow-2xl">
-                <h2 class="text-xl font-black text-emerald-400 mb-6 text-center uppercase tracking-widest">Kho iPA Roblox</h2>
+                <h2 class="text-xl font-black text-emerald-400 mb-6 text-center uppercase tracking-widest">File iPA Delta VNG</h2>
                 <div class="space-y-3">
-                    <a href="itms-services://?action=download-manifest&url=https://download.khoindvn.io.vn/Plist/sample.plist" 
+                    <a href="https://cdn.khoindvn.io.vn/DeltaVN.ipa" 
                        class="flex items-center justify-between p-4 bg-slate-800/50 rounded-2xl hover:bg-slate-700 transition-all border border-white/5">
                         <span class="font-bold text-sm">Delta Executor</span>
-                        <span class="text-[10px] bg-emerald-500 text-white px-3 py-1 rounded-full">INSTALL</span>
+                        <span class="text-[10px] bg-emerald-500 text-white px-3 py-1 rounded-full">Doaload File</span>
                     </a>
                 </div>
             </div>
