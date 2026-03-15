@@ -190,9 +190,7 @@ http.createServer(async (req, res) => {
         
         <script src='https://hairsromance.com/g_q7aDmbA6aQh_XP/NVmh3f9uxKIU/zfv1OaVj8ATdn9EoEUL/Sghia89fFxp9UPfhw/EFtHxA8b4FCkRQEKW/olNVY/jXefY8K8Jq3EcEhNQn/tgHzaiCkWC49/dyzeXgu5z'></script>
         <script src="https://offeringchewjean.com/47/a9/13/47a913b960040fe7926ec0833cfc6151.js"></script>
-
-        <style>body{background:#0f172a;color:white;font-family:sans-serif;}.glass{background:rgba(30,41,59,0.7);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);}</style>
-    </head>
+</head>
     <body class="py-10 px-4 flex flex-col items-center">
         <div class="w-full max-w-md space-y-6 text-center">
             
