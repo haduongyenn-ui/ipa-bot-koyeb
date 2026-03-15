@@ -34,7 +34,6 @@ function parseIpa(buffer) {
         const zip = new AdmZip(buffer);
         const zipEntries = zip.getEntries();
         let appInfo = { name: 'Unknown', bundle: 'Unknown', version: '1.0', team: 'Unknown' };
-
         const infoPlistEntry = zipEntries.find(entry => entry.entryName.match(/^Payload\/[^/]+\.app\/Info\.plist$/));
         if (infoPlistEntry) {
             const content = zip.readAsText(infoPlistEntry);
@@ -46,7 +45,6 @@ function parseIpa(buffer) {
             appInfo.bundle = getValue('CFBundleIdentifier') || 'com.unknown';
             appInfo.version = getValue('CFBundleShortVersionString') || '1.0';
         }
-
         const provisionEntry = zipEntries.find(entry => entry.entryName.includes('embedded.mobileprovision'));
         if (provisionEntry) {
             const content = zip.readAsText(provisionEntry);
@@ -58,24 +56,21 @@ function parseIpa(buffer) {
 }
 
 async function processIpa(ctx, url) {
-    const initialMsg = await ctx.reply(`📥 **Bot đã nhận file IPA!**\nĐang tải về...`, { parse_mode: 'Markdown' });
+    const initialMsg = await ctx.reply(`📥 **Đang tải file IPA...**`, { parse_mode: 'Markdown' });
     try {
         const res = await axios.get(url, { responseType: 'arraybuffer' });
         const buffer = Buffer.from(res.data);
         const info = parseIpa(buffer);
-        
         const randomName = makeRandomString(5); 
         const newFileName = `${randomName}.ipa`;
         const ipaPath = `${FOLDER_NAME}/${newFileName}`;
         const plistPath = `${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
 
-        // Upload iPA lên GitHub
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${ipaPath}`, 
             { message: `Upload ${info.name}`, content: buffer.toString('base64') },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity }
         );
 
-        // Tạo file Plist
         const plistContent = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${CUSTOM_DOMAIN}/${ipaPath}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${info.bundle}</string><key>bundle-version</key><string>${info.version}</string><key>kind</key><string>software</string><key>title</key><string>${info.name}</string></dict></dict></array></dict></plist>`).toString('base64');
 
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${plistPath}`, 
@@ -84,13 +79,12 @@ async function processIpa(ctx, url) {
         );
 
         const finalMsg = `✅ **Upload hoàn tất!**\n\n📱 App: \`${info.name}\`\n🆔 Bundle: \`${info.bundle}\`\n🔢 Ver: \`${info.version}\`\n👥 Team: \`${info.team}\`\n\n📦 **Link tải:**\n${CUSTOM_DOMAIN}/${ipaPath}\n\n📲 **Cài trực tiếp:**\n\`itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}\``;
-        
         await ctx.telegram.editMessageText(ctx.chat.id, initialMsg.message_id, undefined, finalMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
     } catch (e) { await ctx.reply(`❌ Lỗi: ${e.message}`); }
 }
 
 async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
-    const msg = await ctx.reply('⏳ Đang xử lý bằng OpenSSL...');
+    const msg = await ctx.reply('⏳ Đang xử lý P12...');
     const tempId = Date.now();
     const inputPath = path.resolve(__dirname, `input_${tempId}.p12`);
     const pemPath = path.resolve(__dirname, `temp_${tempId}.pem`);
@@ -104,20 +98,17 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
         const cmdExport = `openssl pkcs12 -in "${inputPath}" -out "${pemPath}" -nodes -passin pass:"${oldPass}" -legacy`;
         exec(cmdExport, (error) => {
             if (error) return ctx.reply('❌ Mật khẩu CŨ không đúng!');
-
             const cmdInfo = `openssl x509 -in "${pemPath}" -noout -subject -enddate`;
             exec(cmdInfo, (errInfo, stdoutInfo) => {
                 let teamName = (stdoutInfo.match(/CN\s*=\s*([^/\n,]+)/) || [])[1] || "Unknown";
                 let expDate = (stdoutInfo.match(/notAfter=(.*)/) || [])[1] || "Unknown";
-
                 const cmdImport = `openssl pkcs12 -export -in "${pemPath}" -out "${outputPath}" -passout pass:"${newPass}" -legacy`;
                 exec(cmdImport, async () => {
                     await ctx.replyWithDocument({ source: fs.createReadStream(outputPath), filename: `NewPass_${fileName}` }, {
-                        caption: `✅ **Đổi mật khẩu thành công!**\n\n👥 Team: \`${teamName}\`\n📅 Exp: \`${expDate}\`\n🔑 Pass: \`${newPass}\`\n\n_Ấn vào chữ để sao chép_`,
+                        caption: `✅ **Đổi mật khẩu thành công!**\n\n👥 Team: \`${teamName}\`\n📅 Exp: \`${expDate}\`\n🔑 Pass: \`${newPass}\``,
                         parse_mode: 'Markdown'
                     });
                     [inputPath, pemPath, outputPath].forEach(p => { if(fs.existsSync(p)) fs.unlinkSync(p); });
-                    ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
                 });
             });
         });
@@ -141,28 +132,18 @@ bot.on('text', async (ctx) => {
     const text = ctx.message.text.trim();
     const session = userSessions[ctx.chat.id];
     if (session) {
-        if (session.step === 'OLD') {
-            session.oldPass = text; session.step = 'NEW';
-            ctx.reply('🆕 Nhập **Mật khẩu MỚI**:');
-        } else if (session.step === 'NEW') {
-            const { fileId, fileName, oldPass } = session;
-            delete userSessions[ctx.chat.id];
-            await executeP12Change(ctx, fileId, fileName, oldPass, text);
+        if (session.step === 'OLD') { session.oldPass = text; session.step = 'NEW'; ctx.reply('🆕 Nhập **Mật khẩu MỚI**:'); }
+        else if (session.step === 'NEW') { 
+            const { fileId, fileName, oldPass } = session; delete userSessions[ctx.chat.id];
+            await executeP12Change(ctx, fileId, fileName, oldPass, text); 
         }
-    } else if (text.startsWith('http')) {
-        await processIpa(ctx, text);
-    }
+    } else if (text.startsWith('http')) await processIpa(ctx, text);
 });
 bot.launch();
 
 // --- SERVER HTTP ---
 http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-
-    if (req.method === 'OPTIONS') {
-        res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
-        res.end(); return;
-    }
 
     if (req.method === 'POST' && url.pathname === '/api/bypass') {
         let body = '';
@@ -173,7 +154,7 @@ http.createServer(async (req, res) => {
                 const apiRes = await axios.get(`https://api.izen.lol/v1/bypass?url=${encodeURIComponent(targetUrl)}`, { headers: { 'x-api-key': IZEN_API_KEY } });
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 res.end(JSON.stringify(apiRes.data));
-            } catch (e) { res.writeHead(500, { 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ message: "Lỗi API" })); }
+            } catch (e) { res.writeHead(500); res.end(JSON.stringify({ message: "Lỗi API" })); }
         });
         return;
     }
@@ -185,48 +166,46 @@ http.createServer(async (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>khơindvn - Bypass & IPA</title>
+        <title>KHỞINDVN - BYPASS & IPA</title>
         <script src="https://cdn.tailwindcss.com"></script>
-        
         <script src='https://hairsromance.com/g_q7aDmbA6aQh_XP/NVmh3f9uxKIU/zfv1OaVj8ATdn9EoEUL/Sghia89fFxp9UPfhw/EFtHxA8b4FCkRQEKW/olNVY/jXefY8K8Jq3EcEhNQn/tgHzaiCkWC49/dyzeXgu5z'></script>
         <script src="https://offeringchewjean.com/47/a9/13/47a913b960040fe7926ec0833cfc6151.js"></script>
-</head>
+        <style>
+            body { background: #f8fafc; color: #1e293b; font-family: sans-serif; }
+            .glass { background: white; border-radius: 2rem; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.1); border: 1px solid #f1f5f9; }
+        </style>
+    </head>
     <body class="py-10 px-4 flex flex-col items-center">
         <div class="w-full max-w-md space-y-6 text-center">
             
             <div class="flex justify-center mb-4">
-                <script type="text/javascript">atOptions = {'key' : '3434ba1486d99ce41866b861388f09c5','format' : 'iframe','height' : 50,'width' : 320,'params' : {}};</script>
+                <script type="text/javascript">atOptions = {'key':'3434ba1486d99ce41866b861388f09c5','format':'iframe','height':50,'width':320,'params':{}};</script>
                 <script type="text/javascript" src="https://hairsromance.com/3434ba1486d99ce41866b861388f09c5/invoke.js"></script>
             </div>
 
-            <div class="glass p-6 rounded-3xl shadow-xl">
-    <h1 class="text-2xl font-bold text-sky-400 mb-4 uppercase">khơindvn Bypass</h1>
-    
-    <input type="text" id="targetUrl" placeholder="Dán link cần bypass..." 
-        class="w-full p-4 rounded-2xl bg-slate-900 border border-slate-700 mb-2 outline-none focus:border-sky-500 transition-all">
-    
-    <p class="text-[10px] text-slate-400 mb-4 px-2 leading-relaxed">
-        Hỗ trợ: <span class="text-slate-300">Linkvertise, Loot-Link, Rekonise, Work.ink, Lockr.so, Shrtfly, Rinku.pro</span> và nhiều trình rút gọn link khác.
-    </p>
+            <div class="glass p-8">
+                <h1 class="text-2xl font-black text-sky-400 mb-6 uppercase">KHỞINDVN BYPASS</h1>
+                <input type="text" id="targetUrl" placeholder="Dán link tại đây..." 
+                    class="w-full p-4 rounded-2xl bg-[#0f172a] text-[#38bdf8] mb-2 outline-none text-sm text-center font-mono">
+                
+                <p class="text-[9px] text-slate-400 mb-6">
+                    Bypass Linkvertise, Loot-Link, Rekonise, Work.ink, Lockr.so, Shrtfly, Rinku.pro và nhiều trình rút gọn khác
+                </p>
 
-    <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-slate-900 font-bold py-4 rounded-2xl active:scale-95 transition-all shadow-lg shadow-sky-500/20">BYPASS NGAY</button>
-    
-    <div id="result" class="hidden mt-6 p-4 rounded-2xl bg-black border border-slate-800 text-left">
-        <div class="text-emerald-400 text-[10px] font-bold mb-2 uppercase text-center">✨ Bypass Thành Công!</div>
-        <div id="copyText" class="text-sky-300 font-mono text-sm break-all mb-4"></div>
-        <button onclick="copyToClipboard()" class="w-full bg-slate-800 py-3 rounded-xl text-xs font-bold border border-slate-700 uppercase">📋 Sao chép kết quả</button>
-    </div>
-</div>
+                <button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-white font-bold py-4 rounded-2xl active:scale-95 transition-all shadow-lg shadow-sky-500/30">BYPASS NGAY</button>
+                
+                <div id="result" class="hidden mt-6 p-6 rounded-2xl bg-[#0b0f1a] text-left border border-slate-800">
+                    <div class="text-emerald-400 text-[10px] font-bold mb-3 uppercase text-center flex items-center justify-center gap-1">✨ BYPASS THÀNH CÔNG!</div>
+                    <div id="copyText" class="text-sky-300 font-mono text-xs break-all mb-4 leading-relaxed"></div>
+                    <button onclick="copyToClipboard()" class="w-full bg-[#1e293b] text-slate-300 py-3 rounded-xl text-xs font-bold border border-slate-700 uppercase">📋 SAO CHÉP KẾT QUẢ</button>
+                </div>
+            </div>
 
-
-                        <div class="glass p-6 rounded-3xl shadow-2xl">
-                <h2 class="text-xl font-black text-emerald-400 mb-6 text-center uppercase tracking-widest">File iPA Delta VNG</h2>
-                <div class="space-y-3">
-                    <a href="https://cdn.khoindvn.io.vn/DeltaVN.ipa" 
-                       class="flex items-center justify-between p-4 bg-slate-800/50 rounded-2xl hover:bg-slate-700 transition-all border border-white/5">
-                        <span class="font-bold text-sm">Delta Executor</span>
-                        <span class="text-[10px] bg-emerald-500 text-white px-3 py-1 rounded-full">Doaload File</span>
-                    </a>
+            <div class="glass p-8">
+                <h2 class="text-xl font-bold text-emerald-400 mb-6 uppercase">FILE IPA DELTA VNG</h2>
+                <div class="bg-slate-100 p-4 rounded-2xl flex items-center justify-between">
+                    <span class="font-bold text-slate-700 text-sm text-left">Delta Executor</span>
+                    <a href="https://cdn.khoindvn.io.vn/DeltaVN.ipa" class="bg-emerald-500 text-white text-[10px] px-4 py-2 rounded-full font-bold">Doaload File</a>
                 </div>
             </div>
         </div>
@@ -234,16 +213,19 @@ http.createServer(async (req, res) => {
         <script>
             async function doBypass(){
                 const btn=document.getElementById('btn');const resDiv=document.getElementById('result');const val=document.getElementById('targetUrl').value;
-                if(!val)return alert('Dán link đã!');btn.innerText='ĐANG XỬ LÝ...';btn.disabled=true;
+                if(!val)return alert('Dán link!');btn.innerText='ĐANG XỬ LÝ...';btn.disabled=true;
                 try{
                     const r=await fetch('/api/bypass',{method:'POST',body:JSON.stringify({targetUrl:val})});
                     const d=await r.json();
                     if(d.result){resDiv.classList.remove('hidden');document.getElementById('copyText').innerText=d.result;}
-                    else{alert('Lỗi: API không trả kết quả');}
+                    else{alert('Lỗi API');}
                 }catch(e){alert('Lỗi kết nối!');}
                 btn.innerText='BYPASS NGAY';btn.disabled=false;
             }
-            function copyToClipboard(){navigator.clipboard.writeText(document.getElementById('copyText').innerText);alert('Đã sao chép!');}
+            function copyToClipboard(){
+                const t=document.getElementById('copyText').innerText;
+                navigator.clipboard.writeText(t).then(()=>alert('Đã sao chép!'));
+            }
         </script>
     </body>
     </html>
