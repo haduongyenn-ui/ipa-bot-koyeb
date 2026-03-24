@@ -8,7 +8,6 @@ const path = require('path');
 
 // --- 1. CẤU HÌNH BIẾN MÔI TRƯỜNG ---
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const IZEN_API_KEY = process.env.IZEN_API_KEY;
 
 const GH_CONFIG = {
     owner: 'haduongyenn-ui',
@@ -17,21 +16,21 @@ const GH_CONFIG = {
 };
 
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
-const PLIST_API_DOMAIN = 'https://muacert.com'; // Domain của Nam trỏ về Koyeb
+const PLIST_API_DOMAIN = 'https://muacert.com'; 
 const FOLDER_NAME = 'iPA';    
 const PLIST_FOLDER = 'Plist'; 
 const userSessions = {};
 
-// --- 2. CÁC HÀM XỬ LÝ (GIỮ NGUYÊN & THÊM MỚI) ---
+// --- 2. CÁC HÀM XỬ LÝ ---
 
-// [MỚI] Hàm mã hóa cho Plist API
+// Hàm mã hóa cho Plist API
 function encodePlistPayload(appName, iconURL, bundleID, ipaURL) {
     const payload = `${appName},${iconURL},${bundleID},${ipaURL}`;
     let base64 = Buffer.from(payload).toString('base64');
     return base64.replace(/\+/g, 'waiwai').replace(/\//g, 'qq1545172453').replace(/=/g, 'ysign');
 }
 
-// [MỚI] Hàm giải mã cho Server
+// Hàm giải mã cho Server
 function decodePlistPayload(encoded) {
     try {
         const base64 = encoded.replace(/waiwai/g, '+').replace(/qq1545172453/g, '/').replace(/ysign/g, '=');
@@ -41,13 +40,12 @@ function decodePlistPayload(encoded) {
     } catch (e) { return null; }
 }
 
-[span_0](start_span)// [MỚI] Hàm tạo XML Plist[span_0](end_span)
+// Hàm tạo XML Plist
 function generatePlistXml(data) {
     const esc = (s) => s.replace(/[<>&"']/g, (m) => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":"&apos;"}[m]));
     return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${esc(data.ipaURL)}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${esc(data.bundleID)}</string><key>bundle-version</key><string>1.0</string><key>kind</key><string>software</string><key>title</key><string>${esc(data.appName)}</string></dict></dict></array></dict></plist>`;
 }
 
-// [CŨ] Giữ nguyên hàm gốc của Nam
 function makeRandomString(length) {
     let result = '';
     const char = 'abcdefghijklmnopqrstuvwxyz';
@@ -55,7 +53,6 @@ function makeRandomString(length) {
     return result;
 }
 
-// [CŨ] Giữ nguyên hàm parseIpa của Nam
 function parseIpa(buffer) {
     try {
         const zip = new AdmZip(buffer);
@@ -84,22 +81,18 @@ async function processIpa(ctx, url) {
         const ipaPath = `${FOLDER_NAME}/${newFileName}`;
         const plistPath = `${PLIST_FOLDER}/${newFileName.replace('.ipa', '.plist')}`;
 
-        // Vẫn upload IPA lên GitHub
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${ipaPath}`, 
             { message: `Upload ${info.name}`, content: buffer.toString('base64') },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` }, maxBodyLength: Infinity }
         );
 
         const ipaDirectUrl = `${CUSTOM_DOMAIN}/${ipaPath}`;
-        
-        // Vẫn tạo file Plist tĩnh trên GitHub như cũ
         const plistStatic = Buffer.from(generatePlistXml({ appName: info.name, iconURL: '', bundleID: info.bundle, ipaURL: ipaDirectUrl })).toString('base64');
         await axios.put(`https://api.github.com/repos/${GH_CONFIG.owner}/${GH_CONFIG.repo}/contents/${plistPath}`, 
             { message: `Create Plist ${info.name}`, content: plistStatic },
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        // Thêm link API mới
         const encoded = encodePlistPayload(info.name, 'https://muacert.com/icon.png', info.bundle, ipaDirectUrl);
         const apiLink = `itms-services://?action=download-manifest&url=${PLIST_API_DOMAIN}/api/plist?${encoded}`;
 
@@ -108,7 +101,6 @@ async function processIpa(ctx, url) {
     } catch (e) { await ctx.reply(`❌ Lỗi: ${e.message}`); }
 }
 
-// [CŨ] Giữ nguyên hàm đổi pass P12
 async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
     const msg = await ctx.reply('⏳ Đang xử lý P12...');
     const tempId = Date.now();
@@ -136,7 +128,6 @@ async function executeP12Change(ctx, fileId, fileName, oldPass, newPass) {
     } catch (e) { ctx.reply(`❌ Lỗi: ${e.message}`); }
 }
 
-// --- 3. SỰ KIỆN BOT (GIỮ NGUYÊN) ---
 bot.start((ctx) => ctx.reply('👋 Gửi IPA hoặc P12!'));
 bot.on('document', async (ctx) => {
     const doc = ctx.message.document;
@@ -162,11 +153,9 @@ bot.on('text', async (ctx) => {
 });
 bot.launch();
 
-// --- 4. SERVER HTTP (HỢP NHẤT GIAO DIỆN & API) ---
 http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
-    // [MỚI] Xử lý link cài đặt Plist (Thay thế PHP)
     if (url.pathname === '/api/plist') {
         const data = decodePlistPayload(url.search.substring(1));
         if (!data) {
@@ -177,14 +166,13 @@ http.createServer(async (req, res) => {
         return res.end(generatePlistXml(data));
     }
 
-    // [CŨ] Xử lý API Bypass Link gốc của Nam
     if (req.method === 'POST' && url.pathname === '/api/bypass') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', async () => {
             try {
                 const { targetUrl } = JSON.parse(body);
-                const apiRes = await axios.get(`https://api.izen.lol/v1/bypass?url=${encodeURIComponent(targetUrl)}`, { headers: { 'x-api-key': IZEN_API_KEY } });
+                const apiRes = await axios.get(`https://api.izen.lol/v1/bypass?url=${encodeURIComponent(targetUrl)}`);
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 res.end(JSON.stringify(apiRes.data));
             } catch (e) { res.writeHead(500); res.end(JSON.stringify({ message: "Lỗi API" })); }
@@ -192,7 +180,6 @@ http.createServer(async (req, res) => {
         return;
     }
 
-    // [CŨ] Giao diện HTML Bypass gốc của Nam (Giữ nguyên toàn bộ CSS/JS)
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Khơindvn BYPASS</title><script src="https://cdn.tailwindcss.com"></script><style>body{background:radial-gradient(circle at top, #1e293b 0%, #0f172a 100%);color:#f8fafc;min-height:100vh;}.glass{background:rgba(30,41,59,0.7);backdrop-filter:blur(12px);border-radius:2.5rem;border:1px solid rgba(255,255,255,0.1);}</style></head><body class="py-10 px-4 flex flex-col items-center"><div class="w-full max-w-md space-y-8 text-center"><div class="glass p-8"><h1 class="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-blue-500 mb-6 uppercase">KHƠINDVN BYPASS</h1><input type="text" id="targetUrl" placeholder="Dán link tại đây..." class="w-full p-4 rounded-2xl bg-[#020617] text-sky-400 mb-6 text-center focus:ring-2 ring-sky-500/50 outline-none"><button onclick="doBypass()" id="btn" class="w-full bg-gradient-to-r from-sky-500 to-blue-600 text-white font-black py-4 rounded-2xl active:scale-95 transition-all">BYPASS NGAY</button><div id="result" class="hidden mt-8 p-6 rounded-2xl bg-slate-950/80 border border-sky-500/30"><div id="copyText" class="text-sky-300 font-mono text-xs break-all mb-4"></div><button onclick="copyToClipboard()" class="w-full bg-slate-800 text-sky-400 py-3 rounded-xl font-bold">📋 SAO CHÉP</button></div></div></div><script>async function doBypass(){const btn=document.getElementById('btn');const resDiv=document.getElementById('result');const val=document.getElementById('targetUrl').value;if(!val)return;btn.innerText='ĐANG XỬ LÝ...';try{const r=await fetch('/api/bypass',{method:'POST',body:JSON.stringify({targetUrl:val})});const d=await r.json();if(d.result){resDiv.classList.remove('hidden');document.getElementById('copyText').innerText=d.result;}else{alert('Lỗi API');}}catch(e){alert('Lỗi kết nối!');}btn.innerText='BYPASS NGAY';}function copyToClipboard(){const t=document.getElementById('copyText').innerText;navigator.clipboard.writeText(t).then(()=>alert('Đã sao chép!'));}</script></body></html>`);
+    res.end(`<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Khơindvn BYPASS</title><script src="https://cdn.tailwindcss.com"></script></head><body class="py-10 px-4 flex flex-col items-center"><div class="w-full max-w-md space-y-8 text-center"><h1 class="text-3xl font-black text-sky-400">KHƠINDVN BYPASS</h1><input type="text" id="targetUrl" placeholder="Dán link tại đây..." class="w-full p-4 rounded-2xl bg-black text-sky-400 mb-6 text-center outline-none"><button onclick="doBypass()" id="btn" class="w-full bg-sky-500 text-white font-black py-4 rounded-2xl">BYPASS NGAY</button><div id="result" class="hidden mt-8"><div id="copyText" class="text-sky-300 break-all mb-4"></div><button onclick="copyToClipboard()" class="w-full bg-slate-800 text-sky-400 py-3 rounded-xl">📋 SAO CHÉP</button></div></div><script>async function doBypass(){const btn=document.getElementById('btn');const resDiv=document.getElementById('result');const val=document.getElementById('targetUrl').value;if(!val)return;btn.innerText='ĐANG XỬ LÝ...';try{const r=await fetch('/api/bypass',{method:'POST',body:JSON.stringify({targetUrl:val})});const d=await r.json();if(d.result){resDiv.classList.remove('hidden');document.getElementById('copyText').innerText=d.result;}else{alert('Lỗi API');}}catch(e){alert('Lỗi kết nối!');}btn.innerText='BYPASS NGAY';}function copyToClipboard(){const t=document.getElementById('copyText').innerText;navigator.clipboard.writeText(t).then(()=>alert('Đã sao chép!'));}</script></body></html>`);
 }).listen(process.env.PORT || 8080);
