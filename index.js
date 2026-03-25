@@ -23,14 +23,12 @@ const userSessions = {};
 
 // --- 2. CÁC HÀM XỬ LÝ ---
 
-// Hàm mã hóa cho Plist API
 function encodePlistPayload(appName, iconURL, bundleID, ipaURL) {
     const payload = `${appName},${iconURL},${bundleID},${ipaURL}`;
     let base64 = Buffer.from(payload).toString('base64');
     return base64.replace(/\+/g, 'waiwai').replace(/\//g, 'qq1545172453').replace(/=/g, 'ysign');
 }
 
-// Hàm giải mã cho Server
 function decodePlistPayload(encoded) {
     try {
         const base64 = encoded.replace(/waiwai/g, '+').replace(/qq1545172453/g, '/').replace(/ysign/g, '=');
@@ -40,7 +38,6 @@ function decodePlistPayload(encoded) {
     } catch (e) { return null; }
 }
 
-// Hàm tạo XML Plist
 function generatePlistXml(data) {
     const esc = (s) => s.replace(/[<>&"']/g, (m) => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":"&apos;"}[m]));
     return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${esc(data.ipaURL)}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${esc(data.bundleID)}</string><key>bundle-version</key><string>1.0</string><key>kind</key><string>software</string><key>title</key><string>${esc(data.appName)}</string></dict></dict></array></dict></plist>`;
@@ -65,6 +62,12 @@ function parseIpa(buffer) {
             appInfo.name = getV('CFBundleDisplayName') || getV('CFBundleName') || 'App';
             appInfo.bundle = getV('CFBundleIdentifier') || 'com.unknown';
             appInfo.version = getV('CFBundleShortVersionString') || '1.0';
+        }
+        const provisionEntry = zipEntries.find(entry => entry.entryName.includes('embedded.mobileprovision'));
+        if (provisionEntry) {
+            const content = zip.readAsText(provisionEntry);
+            const teamMatch = content.match(/<key>TeamName<\/key>\s*<string>([^<]+)<\/string>/);
+            if (teamMatch) appInfo.team = teamMatch[1];
         }
         return appInfo;
     } catch (e) { return { name: 'Error', bundle: 'Error', version: '0.0', team: 'Unknown' }; }
@@ -93,10 +96,20 @@ async function processIpa(ctx, url) {
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        const encoded = encodePlistPayload(info.name, 'https://muacert.com/icon.png', info.bundle, ipaDirectUrl);
-        const apiLink = `itms-services://?action=download-manifest&url=${PLIST_API_DOMAIN}/api/plist?${encoded}`;
+        // Tin nhắn mẫu y hệt cũ, loại bỏ link API mới khỏi hiển thị
+        const finalMsg = `✅ **Upload hoàn tất!**
 
-        const finalMsg = `✅ **Thành công!**\n📱 App: \`${info.name}\`\n\n📦 **Link IPA:**\n${ipaDirectUrl}\n\n📲 **Cài (GitHub):**\n\`itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}\`\n\n🚀 **Cài (API Mới):**\n\`${apiLink}\``;
+📱 App: \`${info.name}\`
+🆔 Bundle: \`${info.bundle}\`
+🔢 Ver: \`${info.version}\`
+👥 Team: \`${info.team}\`
+
+📦 **Link tải:**
+${ipaDirectUrl}
+
+📲 **Cài trực tiếp:**
+\`itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}\``;
+
         await ctx.telegram.editMessageText(ctx.chat.id, initialMsg.message_id, undefined, finalMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
     } catch (e) { await ctx.reply(`❌ Lỗi: ${e.message}`); }
 }
