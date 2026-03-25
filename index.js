@@ -17,8 +17,8 @@ const GH_CONFIG = {
 
 const CUSTOM_DOMAIN = 'https://download.khoindvn.io.vn'; 
 const PLIST_API_DOMAIN = 'https://muacert.com'; 
-const FOLDER_NAME = 'iPA';    
-const PLIST_FOLDER = 'Plist'; 
+const FOLDER_NAME = 'ipa';    
+const PLIST_FOLDER = 'plist'; 
 const userSessions = {};
 
 // --- 2. CÁC HÀM XỬ LÝ ---
