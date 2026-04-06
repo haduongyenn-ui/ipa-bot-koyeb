@@ -22,24 +22,35 @@ const PLIST_FOLDER = 'Plist';
 const userSessions = {};
 
 // --- SHORT.IO CONFIG ---
+// Lấy domain từ: https://app.short.io → chọn domain → copy tên domain (vd: api.kh0indvn.io.vn)
 const SHORTIO_API_KEY = process.env.SHORTIO_API_KEY || 'pk_IiGkW5mDdPqhAYMP';
-const SHORTIO_DOMAIN = process.env.SHORTIO_DOMAIN || 'go.short.gy'; // Thay bằng domain Short.io của bạn nếu có
+const SHORTIO_DOMAIN  = process.env.SHORTIO_DOMAIN  || 'api.khoindvn.io.vn';
 
 async function shortenUrl(longUrl) {
     try {
-        const res = await axios.post('https://api.short.io/links', {
-            domain: SHORTIO_DOMAIN,
-            originalURL: longUrl
-        }, {
-            headers: {
-                'authorization': SHORTIO_API_KEY,
-                'content-type': 'application/json'
+        const res = await axios.post(
+            'https://api.short.io/links',
+            {
+                domain: SHORTIO_DOMAIN,
+                originalURL: longUrl,
+                allowDuplicates: true   // tránh lỗi 409 khi cùng URL đã tồn tại
+            },
+            {
+                headers: {
+                    'authorization': SHORTIO_API_KEY,
+                    'content-type': 'application/json'
+                },
+                timeout: 8000
             }
-        });
-        return res.data.shortURL || longUrl;
+        );
+        const short = res.data.shortURL;
+        console.log(`[Short.io] ${longUrl} → ${short}`);
+        return short || longUrl;
     } catch (e) {
-        console.error('Short.io error:', e.response?.data || e.message);
-        return longUrl; // Nếu lỗi thì trả về link gốc
+        // In chi tiết lỗi ra console để dễ debug
+        const errData = e.response?.data;
+        console.error('[Short.io ERROR]', JSON.stringify(errData || e.message));
+        return longUrl; // fallback: trả link gốc, bot vẫn chạy
     }
 }
 
@@ -118,7 +129,7 @@ async function processIpa(ctx, url) {
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        // Rút gọn link itms-services qua Short.io
+        // Rút gọn link itms-services:// trực tiếp qua Short.io
         const itmsLongUrl = `itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}`;
         const itmsShortUrl = await shortenUrl(itmsLongUrl);
 
@@ -192,10 +203,10 @@ bot.on('text', async (ctx) => {
 bot.launch();
 
 http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const urlObj = new URL(req.url, `http://${req.headers.host}`);
 
-    if (url.pathname === '/api/plist') {
-        const data = decodePlistPayload(url.search.substring(1));
+    if (urlObj.pathname === '/api/plist') {
+        const data = decodePlistPayload(urlObj.search.substring(1));
         if (!data) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ code: 400, message: "invalid encoded payload" }));
@@ -204,7 +215,7 @@ http.createServer(async (req, res) => {
         return res.end(generatePlistXml(data));
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/bypass') {
+    if (req.method === 'POST' && urlObj.pathname === '/api/bypass') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', async () => {
