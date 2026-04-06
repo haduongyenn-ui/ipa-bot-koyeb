@@ -21,6 +21,28 @@ const FOLDER_NAME = 'iPA';
 const PLIST_FOLDER = 'Plist'; 
 const userSessions = {};
 
+// --- SHORT.IO CONFIG ---
+const SHORTIO_API_KEY = process.env.SHORTIO_API_KEY || 'pk_IiGkW5mDdPqhAYMP';
+const SHORTIO_DOMAIN = process.env.SHORTIO_DOMAIN || 'go.short.gy'; // Thay bằng domain Short.io của bạn nếu có
+
+async function shortenUrl(longUrl) {
+    try {
+        const res = await axios.post('https://api.short.io/links', {
+            domain: SHORTIO_DOMAIN,
+            originalURL: longUrl
+        }, {
+            headers: {
+                'authorization': SHORTIO_API_KEY,
+                'content-type': 'application/json'
+            }
+        });
+        return res.data.shortURL || longUrl;
+    } catch (e) {
+        console.error('Short.io error:', e.response?.data || e.message);
+        return longUrl; // Nếu lỗi thì trả về link gốc
+    }
+}
+
 // --- 2. CÁC HÀM XỬ LÝ ---
 
 function encodePlistPayload(appName, iconURL, bundleID, ipaURL) {
@@ -96,7 +118,10 @@ async function processIpa(ctx, url) {
             { headers: { Authorization: `Bearer ${GH_CONFIG.token}` } }
         );
 
-        // Tin nhắn mẫu y hệt cũ, loại bỏ link API mới khỏi hiển thị
+        // Rút gọn link itms-services qua Short.io
+        const itmsLongUrl = `itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}`;
+        const itmsShortUrl = await shortenUrl(itmsLongUrl);
+
         const finalMsg = `✅ **Upload hoàn tất!**
 
 📱 App: \`${info.name}\`
@@ -108,7 +133,7 @@ async function processIpa(ctx, url) {
 ${ipaDirectUrl}
 
 📲 **Cài trực tiếp:**
-\`itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}\``;
+\`${itmsShortUrl}\``;
 
         await ctx.telegram.editMessageText(ctx.chat.id, initialMsg.message_id, undefined, finalMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
     } catch (e) { await ctx.reply(`❌ Lỗi: ${e.message}`); }
