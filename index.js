@@ -130,7 +130,8 @@ async function processIpa(ctx, url) {
         );
 
         // Rút gọn link itms-services:// trực tiếp qua Short.io
-        const itmsLongUrl = `itms-services://?action=download-manifest&url=${CUSTOM_DOMAIN}/${plistPath}`;
+        const plistRawUrl = `https://github.com/${GH_CONFIG.owner}/${GH_CONFIG.repo}/raw/refs/heads/main/${plistPath}`;
+        const itmsLongUrl = `itms-services://?action=download-manifest&url=${plistRawUrl}`;
         const itmsShortUrl = await shortenUrl(itmsLongUrl);
 
         const finalMsg = `✅ **Upload hoàn tất!**
