@@ -73,7 +73,37 @@ function decodePlistPayload(encoded) {
 
 function generatePlistXml(data) {
     const esc = (s) => s.replace(/[<>&"']/g, (m) => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":"&apos;"}[m]));
-    return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>items</key><array><dict><key>assets</key><array><dict><key>kind</key><string>software-package</string><key>url</key><string>${esc(data.ipaURL)}</string></dict></array><key>metadata</key><dict><key>bundle-identifier</key><string>${esc(data.bundleID)}</string><key>bundle-version</key><string>1.0</string><key>kind</key><string>software</string><key>title</key><string>${esc(data.appName)}</string></dict></dict></array></dict></plist>`;
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>assets</key>
+            <array>
+                <dict>
+                    <key>kind</key>
+                    <string>software-package</string>
+                    <key>url</key>
+                    <string>${esc(data.ipaURL)}</string>
+                </dict>
+            </array>
+            <key>metadata</key>
+            <dict>
+                <key>bundle-identifier</key>
+                <string>${esc(data.bundleID)}</string>
+                <key>bundle-version</key>
+                <string>1.0</string>
+                <key>kind</key>
+                <string>software</string>
+                <key>title</key>
+                <string>${esc(data.appName)}</string>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>`;
 }
 
 function makeRandomString(length) {
